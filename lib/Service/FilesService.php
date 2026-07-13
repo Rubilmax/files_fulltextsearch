@@ -11,9 +11,6 @@ namespace OCA\Files_FullTextSearch\Service;
 
 use Exception;
 use OC\FullTextSearch\Model\DocumentAccess;
-use OC\SystemTag\SystemTagManager;
-use OC\SystemTag\SystemTagObjectMapper;
-use OC\User\NoUserException;
 use OCA\Files_FullTextSearch\ConfigLexicon;
 use OCA\Files_FullTextSearch\Exceptions\EmptyUserException;
 use OCA\Files_FullTextSearch\Exceptions\FileIsNotIndexableException;
@@ -23,7 +20,6 @@ use OCA\Files_FullTextSearch\Exceptions\KnownFileSourceException;
 use OCA\Files_FullTextSearch\Model\FilesDocument;
 use OCA\Files_FullTextSearch\Provider\FilesProvider;
 use OCA\Files_FullTextSearch\Tools\Traits\TArrayTools;
-use OCP\App\IAppManager;
 use OCP\AppFramework\Services\IAppConfig;
 use OCP\Comments\ICommentsManager;
 use OCP\Files\File;
@@ -43,8 +39,9 @@ use OCP\FullTextSearch\Model\IRunner;
 use OCP\IURLGenerator;
 use OCP\IUserManager;
 use OCP\Lock\LockedException;
-use OCP\Share\IManager as IShareManager;
 use OCP\SystemTag\ISystemTag;
+use OCP\SystemTag\ISystemTagManager;
+use OCP\SystemTag\ISystemTagObjectMapper;
 use Psr\Log\LoggerInterface;
 use Throwable;
 
@@ -66,17 +63,14 @@ class FilesService {
 	private ?IRunner $runner = null;
 	private int $sumDocuments;
 
-
 	public function __construct(
 		private IRootFolder $rootFolder,
-		private IAppManager $appManager,
 		private readonly IAppConfig $appConfig,
 		private IUserManager $userManager,
-		private IShareManager $shareManager,
 		private IURLGenerator $urlGenerator,
 		private ICommentsManager $commentsManager,
-		private SystemTagObjectMapper $systemTagObjectMapper,
-		private SystemTagManager $systemTagManager,
+		private ISystemTagObjectMapper $systemTagObjectMapper,
+		private ISystemTagManager $systemTagManager,
 		private ConfigService $configService,
 		private LocalFilesService $localFilesService,
 		private ExternalFilesService $externalFilesService,
@@ -87,7 +81,6 @@ class FilesService {
 	) {
 	}
 
-
 	/**
 	 * @param IRunner $runner
 	 */
@@ -95,19 +88,17 @@ class FilesService {
 		$this->runner = $runner;
 	}
 
-
 	/**
 	 * @param string $userId
 	 * @param IIndexOptions $indexOptions
 	 *
-	 * @return FilesDocument[]
+	 * @return string[]
 	 * @throws NotFoundException
 	 * @throws InvalidPathException
 	 */
 	public function getChunksFromUser(string $userId, IIndexOptions $indexOptions): array {
 		$this->initFileSystems($userId);
 
-		/** @var Folder $files */
 		try {
 			$files = $this->rootFolder->getUserFolder($userId)
 				->get($indexOptions->getOption('path', '/'));
@@ -115,6 +106,9 @@ class FilesService {
 			return [];
 		} catch (Throwable $e) {
 			$this->logger->warning('Issue while retrieving rootFolder for ' . $userId, ['exception' => $e]);
+			return [];
+		}
+		if ($this->isMountExcluded($files)) {
 			return [];
 		}
 
@@ -131,22 +125,36 @@ class FilesService {
 		return [$this->getPathFromRoot($files->getPath(), $userId, true)];
 	}
 
-
 	/**
 	 * @param string $userId
 	 * @param Folder $node
 	 * @param int $level
 	 *
-	 * @return FilesDocument[]
+	 * @return string[]
 	 * @throws InvalidPathException
 	 * @throws NotFoundException
 	 */
 	private function getChunksFromDirectory(string $userId, Folder $node, int $level = 0): array {
 		$entries = [];
 		$level++;
+		if ($this->isMountExcluded($node)) {
+			return [];
+		}
 
 		$this->logger->debug('getChunksFromDirectory', ['userId' => $userId, 'level' => $level]);
-		$files = $node->getDirectoryListing();
+		try {
+			if ($node->nodeExists('.noindex')) {
+				return [];
+			}
+			$files = $node->getDirectoryListing();
+		} catch (Throwable $e) {
+			$this->logger->warning('Could not traverse a folder while generating index chunks', [
+				'path' => $node->getPath(),
+				'exception' => $e,
+			]);
+
+			return [];
+		}
 		if (empty($files)) {
 			$entries[] = $this->getPathFromRoot($node->getPath(), $userId, true);
 		}
@@ -173,7 +181,6 @@ class FilesService {
 		return $entries;
 	}
 
-
 	/**
 	 * @param string $userId
 	 * @param string $chunk
@@ -182,34 +189,24 @@ class FilesService {
 	 * @throws InvalidPathException
 	 * @throws NotFoundException
 	 * @throws NotPermittedException
-	 * @throws NoUserException
 	 */
 	public function getFilesFromUser(string $userId, string $chunk): array {
 		$this->initFileSystems($userId);
 		$this->sumDocuments = 0;
 
-		/** @var Folder $files */
 		$files = $this->rootFolder->getUserFolder($userId)
 			->get($chunk);
 
-		$result = [];
+		$result = $this->generateFilesDocumentsWithAncestors($userId, $files);
 		if ($files instanceof Folder) {
 			$this->logger->debug('object from getFilesFromUser is a Folder', ['chunk' => $chunk]);
-			$result = $this->generateFilesDocumentFromParent($userId, $files);
-
 			$result = array_merge($result, $this->getFilesFromDirectory($userId, $files));
 		} else {
 			$this->logger->debug('object from getFilesFromUser is a File', ['chunk' => $chunk]);
-			try {
-				$result[] = $this->generateFilesDocumentFromFile($userId, $files);
-			} catch (FileIsNotIndexableException $e) {
-				/** we do nothin' */
-			}
 		}
 
-		return $result;
+		return $this->deduplicateDocuments($result);
 	}
-
 
 	/**
 	 * @param string $userId
@@ -237,21 +234,42 @@ class FilesService {
 			if ($node->nodeExists('.noindex')) {
 				return $documents;
 			}
-		} catch (StorageNotAvailableException $e) {
+		} catch (Throwable $e) {
+			$this->logger->warning('Could not check whether a folder is indexable', [
+				'path' => $node->getPath(),
+				'exception' => $e,
+			]);
+
 			return $documents;
 		}
 
-		if (($this->appConfig->getAppValueInt(ConfigLexicon::FILES_EXTERNAL) === 2)
-			&& ($node->getMountPoint()->getMountType() === 'external')) {
+		if ($this->isMountExcluded($node)) {
 			return $documents;
 		}
 
-		$files = $node->getDirectoryListing();
+		try {
+			$files = $node->getDirectoryListing();
+		} catch (Throwable $e) {
+			$this->logger->warning('Could not list a folder while generating index documents', [
+				'path' => $node->getPath(),
+				'exception' => $e,
+			]);
+
+			return $documents;
+		}
+
 		foreach ($files as $file) {
 			try {
 				$documents[] = $this->generateFilesDocumentFromFile($userId, $file);
 				$this->sumDocuments++;
 			} catch (FileIsNotIndexableException $e) {
+				continue;
+			} catch (Throwable $e) {
+				$this->logger->warning('Could not generate an index document for a file', [
+					'path' => $file->getPath(),
+					'exception' => $e,
+				]);
+
 				continue;
 			}
 
@@ -263,7 +281,6 @@ class FilesService {
 
 		return $documents;
 	}
-
 
 	/**
 	 * @param string $userId
@@ -282,26 +299,74 @@ class FilesService {
 		$this->groupFoldersService->initGroupSharesForUser($userId);
 	}
 
+	private function isMountExcluded(Node $node): bool {
+		try {
+			$mountType = $node->getMountPoint()->getMountType();
+		} catch (Throwable $e) {
+			$this->logger->warning('Could not determine the file mount type', [
+				'path' => $node->getPath(),
+				'exception' => $e,
+			]);
+
+			return true;
+		}
+
+		return ($mountType === 'external'
+				&& $this->appConfig->getAppValueInt(ConfigLexicon::FILES_EXTERNAL) === 2)
+			|| ($mountType === 'group'
+				&& !$this->appConfig->getAppValueBool(ConfigLexicon::FILES_GROUP_FOLDERS));
+	}
 
 	/**
 	 * @param string $userId
-	 * @param Folder $parent
+	 * @param Node $node
 	 *
 	 * @return array
 	 */
-	private function generateFilesDocumentFromParent(string $userId, Folder $parent): array {
+	private function generateFilesDocumentsWithAncestors(string $userId, Node $node): array {
 		$documents = [];
-		try {
-			for ($i = 0; $i < $this->appConfig->getAppValueInt(ConfigLexicon::FILES_CHUNK_SIZE); $i++) {
-				$parent = $parent->getParent();
-				$documents[] = $this->generateFilesDocumentFromFile($userId, $parent);
+		$userFolder = $this->rootFolder->getUserFolder($userId);
+		$current = $node;
+		$visitedPaths = [];
+		while ($current->getPath() !== $userFolder->getPath()) {
+			if (isset($visitedPaths[$current->getPath()])) {
+				break;
 			}
-		} catch (Exception $e) {
+			$visitedPaths[$current->getPath()] = true;
+
+			try {
+				$documents[] = $this->generateFilesDocumentFromFile($userId, $current);
+			} catch (FileIsNotIndexableException $e) {
+				// Excluded files and folders are intentionally absent from the scan.
+			} catch (Throwable $e) {
+				$this->logger->warning('Could not generate an index document for a chunk ancestor', [
+					'path' => $current->getPath(),
+					'exception' => $e,
+				]);
+			}
+
+			try {
+				$current = $current->getParent();
+			} catch (Throwable) {
+				break;
+			}
 		}
 
 		return $documents;
 	}
 
+	/**
+	 * @param FilesDocument[] $documents
+	 * @return FilesDocument[]
+	 */
+	private function deduplicateDocuments(array $documents): array {
+		$unique = [];
+		foreach ($documents as $document) {
+			$unique[$document->getId()] = $document;
+		}
+
+		return array_values($unique);
+	}
 
 	/**
 	 * @param string $viewerId
@@ -314,18 +379,14 @@ class FilesService {
 	 * @throws Exception
 	 */
 	private function generateFilesDocumentFromFile(string $viewerId, Node $file): FilesDocument {
-		if (is_null($file->getId())) {
-			throw new NotFoundException();
-		}
-
 		$this->isNodeIndexable($file);
 
 		$source = $this->getFileSource($file);
-		if ($file->getId() === -1) {
+		if ($file->getId() < 0) {
 			throw new FileIsNotIndexableException();
 		}
 
-		if ($file->getExtension() === 'part') {
+		if (strtolower($file->getExtension()) === 'part') {
 			throw new FileIsNotIndexableException('part files are not indexed');
 		}
 
@@ -335,56 +396,45 @@ class FilesService {
 				->getUID();
 		}
 
-		if (!is_string($ownerId)) {
-			$ownerId = '';
-		}
-
 		$document = new FilesDocument(FilesProvider::FILES_PROVIDER_ID, (string)$file->getId());
 		$document->setAccess(new DocumentAccess($ownerId));
 
-		try {
-			$document->setType($file->getType())
-				->setOwnerId($ownerId)
-				->setPath($this->getPathFromViewerId($file->getId(), $viewerId))
-				->setViewerId($viewerId);
-		} catch (Throwable $t) {
-			throw new FileIsNotIndexableException();
+		$path = $this->getPathFromViewerId($file->getId(), $viewerId);
+		if ($path === '') {
+			throw new FileIsNotIndexableException('File is not visible to the index viewer');
 		}
+		$document->setType($file->getType())
+			->setOwnerId($ownerId)
+			->setPath($path)
+			->setViewerId($viewerId);
 
-		if (is_string($file->getMimetype())) {
-			$document->setMimetype($file->getMimetype());
-		}
+		$document->setMimetype($file->getMimetype());
 
 		$document->setModifiedTime($file->getMTime())
 			->setSource($source);
 
-		$tagIds = $this->systemTagObjectMapper->getTagIdsForObjects([$file->getId()], 'files');
-		if (array_key_exists($file->getId(), $tagIds)) {
+		$fileId = (string)$file->getId();
+		$tagIds = $this->systemTagObjectMapper->getTagIdsForObjects([$fileId], 'files');
+		if (array_key_exists($fileId, $tagIds)) {
 			$tags = array_values(
 				array_map(function (ISystemTag $tag): string {
 					return $tag->getName();
-				}, $this->systemTagManager->getTagsByIds($tagIds[$file->getId()]))
+				}, $this->systemTagManager->getTagsByIds($tagIds[$fileId]))
 			);
 			$document->setTags($tags);
 		}
 
 		$document->setModifiedTime($file->getMTime());
 		$stat = $file->stat();
-
-		if (is_array($stat)) {
-			$document->setMore(
-				[
-					'creationTime' => $this->getInt('ctime', $stat),
-					'accessedTime' => $this->getInt('atime', $stat)
-				]
-			);
-		} else {
-			$this->logger->warning('stat() on File #' . $file->getId() . ' is not an array: ' . json_encode($stat));
-		}
+		$document->setMore(
+			[
+				'creationTime' => $this->getInt('ctime', $stat),
+				'accessedTime' => $this->getInt('atime', $stat),
+			]
+		);
 
 		return $document;
 	}
-
 
 	/**
 	 * @param Node $file
@@ -403,9 +453,12 @@ class FilesService {
 			/** we know the source, just leave. */
 		}
 
+		if ($source === '') {
+			throw new FileIsNotIndexableException('Unknown file source');
+		}
+
 		return $source;
 	}
-
 
 	/**
 	 * @param string $userId
@@ -419,7 +472,6 @@ class FilesService {
 			->get($path);
 	}
 
-
 	/**
 	 * @param string $userId
 	 * @param int $fileId
@@ -427,7 +479,6 @@ class FilesService {
 	 * @return Node
 	 * @throws FilesNotFoundException
 	 * @throws EmptyUserException
-	 * @throws NoUserException
 	 */
 	public function getFileFromId(string $userId, int $fileId): Node {
 		if ($userId === '') {
@@ -435,7 +486,7 @@ class FilesService {
 		}
 
 		if ($this->userManager->get($userId) === null) {
-			throw new NoUserException('User does not exist: ' . $userId);
+			throw new FilesNotFoundException('User does not exist: ' . $userId);
 		}
 
 		$files = $this->rootFolder->getUserFolder($userId)
@@ -448,7 +499,6 @@ class FilesService {
 		return array_shift($files);
 	}
 
-
 	/**
 	 * @param IIndex $index
 	 *
@@ -459,7 +509,6 @@ class FilesService {
 	public function getFileFromIndex(IIndex $index): Node {
 		return $this->getFileFromId($index->getOwnerId(), (int)$index->getDocumentId());
 	}
-
 
 	/**
 	 * @param int $fileId
@@ -476,19 +525,21 @@ class FilesService {
 			return '';
 		}
 
-		$file = array_shift($viewerFiles);
-
-		// TODO: better way to do this : we remove the '/userid/files/'
-		$path = $this->getPathFromRoot($file->getPath(), $viewerId);
-		if (!is_string($path)) {
-			throw new FileIsNotIndexableException();
-		}
-
-		$path = rtrim(str_replace('//', '/', $path), '/');
-
-		return $path;
+		return $this->getRelativePath($viewerId, $viewerFiles[0]);
 	}
 
+	/**
+	 * Return a node path relative to the user's Files root without relying on
+	 * Nextcloud's internal storage path layout.
+	 */
+	public function getRelativePath(string $userId, Node $file): string {
+		$path = $this->rootFolder->getUserFolder($userId)->getRelativePath($file->getPath());
+		if ($path === null) {
+			throw new FileIsNotIndexableException('File is outside the user folder');
+		}
+
+		return rtrim(str_replace('//', '/', $path), '/');
+	}
 
 	/**
 	 * @param FilesDocument $document
@@ -496,14 +547,12 @@ class FilesService {
 	public function generateDocument(FilesDocument $document) {
 		try {
 			$this->updateFilesDocument($document);
-		} catch (Exception $e) {
-			// TODO - update $document with a error status instead of just ignore !
+		} catch (Throwable $e) {
 			$document->getIndex()
-				->setStatus(IIndex::INDEX_IGNORE);
+				->setStatus(IIndex::INDEX_IGNORE, true);
 			$this->logger->warning('Exception while generateDocument', ['exception' => $e]);
 		}
 	}
-
 
 	/**
 	 * @param IIndex $index
@@ -519,27 +568,51 @@ class FilesService {
 
 			if (($this->appConfig->getAppValueInt(ConfigLexicon::FILES_EXTERNAL) === 2)
 				&& ($file->getMountPoint()->getMountType() === 'external')) {
-				throw new Exception();
+				return $this->createStatusDocument($index, IIndex::INDEX_REMOVE);
 			}
-		} catch (Exception $e) {
-			$index->setStatus(IIndex::INDEX_REMOVE);
-			$document = new FilesDocument($index->getProviderId(), $index->getDocumentId());
-			$document->setIndex($index);
-			$document->setAccess(new DocumentAccess(''));
-
-			return $document;
+		} catch (FilesNotFoundException|EmptyUserException $e) {
+			return $this->createStatusDocument($index, IIndex::INDEX_REMOVE);
+		} catch (Throwable $e) {
+			return $this->createStatusDocument($index, IIndex::INDEX_IGNORE, $e);
 		}
 
-		$this->isNodeIndexable($file);
-
-		$document = $this->generateFilesDocumentFromFile($index->getOwnerId(), $file);
+		try {
+			$document = $this->generateFilesDocumentFromFile($index->getOwnerId(), $file);
+		} catch (FileIsNotIndexableException $e) {
+			return $this->createStatusDocument($index, IIndex::INDEX_REMOVE);
+		} catch (StorageNotAvailableException|NotPermittedException|LockedException $e) {
+			return $this->createStatusDocument($index, IIndex::INDEX_IGNORE, $e);
+		} catch (Throwable $e) {
+			return $this->createStatusDocument($index, IIndex::INDEX_IGNORE, $e);
+		}
 		$document->setIndex($index);
 
-		$this->updateFilesDocumentFromFile($document, $file);
+		try {
+			$this->updateFilesDocumentFromFile($document, $file);
+		} catch (FileIsNotIndexableException $e) {
+			return $this->createStatusDocument($index, IIndex::INDEX_REMOVE);
+		} catch (Throwable $e) {
+			return $this->createStatusDocument($index, IIndex::INDEX_IGNORE, $e);
+		}
 
 		return $document;
 	}
 
+	private function createStatusDocument(IIndex $index, int $status, ?Throwable $exception = null): FilesDocument {
+		$index->setStatus($status, true);
+		$document = new FilesDocument($index->getProviderId(), $index->getDocumentId());
+		$document->setIndex($index);
+		$document->setAccess(new DocumentAccess(''));
+
+		if ($exception !== null) {
+			$this->logger->warning('Temporarily skipping a file index update', [
+				'documentId' => $index->getDocumentId(),
+				'exception' => $exception,
+			]);
+		}
+
+		return $document;
+	}
 
 	/**
 	 * @param IIndexDocument $document
@@ -550,7 +623,6 @@ class FilesService {
 		$this->extensionService->indexComparing($document);
 
 		$index = $document->getIndex();
-
 
 		if (!$this->configService->compareIndexOptions($index)) {
 			$index->setStatus(IIndex::INDEX_CONTENT);
@@ -570,7 +642,6 @@ class FilesService {
 		return false;
 	}
 
-
 	/**
 	 * @param IIndex $index
 	 *
@@ -589,7 +660,6 @@ class FilesService {
 		return $document;
 	}
 
-
 	/**
 	 * @param FilesDocument $document
 	 *
@@ -607,7 +677,6 @@ class FilesService {
 		}
 	}
 
-
 	/**
 	 * @param FilesDocument $document
 	 * @param Node $file
@@ -623,7 +692,6 @@ class FilesService {
 
 		$document->addMetaTag($document->getSource());
 	}
-
 
 	/**
 	 * @param FilesDocument $document
@@ -645,7 +713,6 @@ class FilesService {
 		$this->groupFoldersService->updateDocumentAccess($document, $file);
 	}
 
-
 	/**
 	 * @param FilesDocument $document
 	 * @param Node $file
@@ -659,44 +726,51 @@ class FilesService {
 			)
 		);
 
-		if ((!$document->getIndex()
-			->isStatus(IIndex::INDEX_CONTENT)
-			 && !$document->getIndex()
-			 	->isStatus(IIndex::INDEX_META)
-		)
-		|| $file->getType() !== FileInfo::TYPE_FILE) {
+		$updateContent = $document->getIndex()->isStatus(IIndex::INDEX_CONTENT);
+		$updateMeta = $document->getIndex()->isStatus(IIndex::INDEX_META);
+		if (!$updateContent && !$updateMeta) {
 			return;
 		}
 
-		try {
-			/** @var File $file */
-			if ($file->getSize()
-				< ($this->appConfig->getAppValueInt(ConfigLexicon::FILES_SIZE) * 1024 * 1024)) {
-				$this->extractContentFromFileText($document, $file);
-				$this->extractContentFromFileOffice($document, $file);
-				$this->extractContentFromFilePDF($document, $file);
-				$this->extractContentFromFileZip($document, $file);
+		if ($updateContent && $file->getType() === FileInfo::TYPE_FILE) {
+			try {
+				/** @var File $file */
+				if ($file->getSize()
+					<= ($this->appConfig->getAppValueInt(ConfigLexicon::FILES_SIZE) * 1024 * 1024)) {
+					$this->extractContentFromFileText($document, $file);
+					$this->extractContentFromFileOffice($document, $file);
+					$this->extractContentFromFilePDF($document, $file);
+					$this->extractContentFromFileZip($document, $file);
 
-				$this->extensionService->fileIndexing($document, $file);
+					$this->extensionService->fileIndexing($document, $file);
+				}
+			} catch (Throwable $t) {
+				$this->manageContentErrorException($document, $t);
 			}
-		} catch (Throwable $t) {
-			$this->manageContentErrorException($document, $t);
-		}
 
-		if ($document->getContent() === null) {
-			$document->getIndex()
-				->unsetStatus(IIndex::INDEX_CONTENT);
+			if ($document->getContent() === '') {
+				$document->getIndex()
+					->unsetStatus(IIndex::INDEX_CONTENT);
+			}
 		}
 
 		$this->updateCommentsFromFile($document);
 	}
 
-
 	/**
 	 * @param FilesDocument $document
 	 */
 	private function updateCommentsFromFile(FilesDocument $document) {
-		$comments = $this->commentsManager->getForObject('files', $document->getId());
+		try {
+			$comments = $this->commentsManager->getForObject('files', $document->getId());
+		} catch (Throwable $e) {
+			$this->logger->warning('Could not load comments for a file index', [
+				'documentId' => $document->getId(),
+				'exception' => $e,
+			]);
+
+			return;
+		}
 
 		$part = [];
 		foreach ($comments as $comment) {
@@ -713,6 +787,7 @@ class FilesService {
 	 * @return string
 	 */
 	private function parseMimeType(string $mimeType, string $extension): string {
+		$extension = strtolower($extension);
 		$parsed = '';
 		try {
 			$this->parseMimeTypeText($mimeType, $extension, $parsed);
@@ -724,7 +799,6 @@ class FilesService {
 
 		return $parsed;
 	}
-
 
 	/**
 	 * @param string $mimeType
@@ -740,6 +814,14 @@ class FilesService {
 		}
 
 		if ($mimeType === 'message/rfc822') {
+			$parsed = self::MIMETYPE_TEXT;
+			throw new KnownFileMimeTypeException();
+		}
+
+		if ($mimeType === 'application/json'
+			|| str_ends_with($mimeType, '+json')
+			|| $mimeType === 'application/yaml'
+			|| $mimeType === 'application/x-yaml') {
 			$parsed = self::MIMETYPE_TEXT;
 			throw new KnownFileMimeTypeException();
 		}
@@ -770,7 +852,6 @@ class FilesService {
 		$this->parseMimeTypeTextByExtension($mimeType, $extension, $parsed);
 	}
 
-
 	/**
 	 * @param string $mimeType
 	 * @param string $extension
@@ -798,7 +879,6 @@ class FilesService {
 		}
 	}
 
-
 	/**
 	 * @param string $mimeType
 	 * @param string $parsed
@@ -812,7 +892,6 @@ class FilesService {
 		}
 	}
 
-
 	/**
 	 * @param string $mimeType
 	 * @param string $parsed
@@ -825,7 +904,6 @@ class FilesService {
 			throw new KnownFileMimeTypeException();
 		}
 	}
-
 
 	/**
 	 * @param string $mimeType
@@ -852,7 +930,6 @@ class FilesService {
 		}
 	}
 
-
 	/**
 	 * @param FilesDocument $document
 	 * @param File $file
@@ -868,13 +945,15 @@ class FilesService {
 		}
 
 		try {
-			$document->setContent(
-				base64_encode($file->getContent()), IIndexDocument::ENCODED_BASE64
-			);
+			$content = $file->getContent();
+			if (strtolower($file->getExtension()) === 'drawio') {
+				$content = $this->extractDrawioContent($content);
+			}
+
+			$document->setContent(base64_encode($content), IIndexDocument::ENCODED_BASE64);
 		} catch (NotPermittedException|LockedException $e) {
 		}
 	}
-
 
 	/**
 	 * @param FilesDocument $document
@@ -897,76 +976,84 @@ class FilesService {
 			return;
 		}
 
-		// 20220219 Inflate drawio file
-		if ($file->getExtension() === 'drawio') {
-			$content = $file->getContent();
+		try {
+			$document->setContent(
+				base64_encode($file->getContent()), IIndexDocument::ENCODED_BASE64
+			);
+		} catch (NotPermittedException|LockedException $e) {
+		}
+	}
 
-			try {
-				$xml = simplexml_load_string($content);
+	private function extractDrawioContent(string $content): string {
+		$xml = simplexml_load_string(
+			$content,
+			\SimpleXMLElement::class,
+			LIBXML_NONET | LIBXML_NOCDATA | LIBXML_NOERROR | LIBXML_NOWARNING,
+		);
+		if ($xml === false) {
+			return '';
+		}
 
-				// Initialize $content
-				$content = '';
-
-				foreach ($xml->diagram as $child) {
-					$deflated_content = (string)$child;
-					$base64decoded = base64_decode($deflated_content);
-					$urlencoded_content = gzinflate($base64decoded);
-					$urldecoded_content = urldecode($urlencoded_content);
-
-					// Remove image tag
-					$diagram_str = preg_replace('/style=\"shape=image[^"]*\"/', '', $urldecoded_content);
-
-					// Construct XML
-					$diagram_xml = simplexml_load_string($diagram_str);
-					$content = $content . ' ' . $this->readDrawioXmlValue($diagram_xml);
+		$result = '';
+		foreach ($xml->diagram as $diagram) {
+			$diagramXml = null;
+			if ($diagram->count() > 0) {
+				$diagramXml = $diagram;
+			} else {
+				$decoded = base64_decode((string)$diagram, true);
+				$maxSizeMb = min(
+					$this->appConfig->getAppValueInt(ConfigLexicon::FILES_SIZE),
+					intdiv(PHP_INT_MAX, 1024 * 1024),
+				);
+				$maxLength = max(1, $maxSizeMb * 1024 * 1024);
+				$inflated = ($decoded === false) ? false : @gzinflate($decoded, $maxLength);
+				if ($inflated === false) {
+					continue;
 				}
-			} catch (\Throwable $t) {
+
+				$rawXml = preg_replace('/style=\"shape=image[^"]*\"/', '', urldecode($inflated));
+				if ($rawXml !== null) {
+					$parsed = simplexml_load_string(
+						$rawXml,
+						\SimpleXMLElement::class,
+						LIBXML_NONET | LIBXML_NOCDATA | LIBXML_NOERROR | LIBXML_NOWARNING,
+					);
+					$diagramXml = ($parsed === false) ? null : $parsed;
+				}
 			}
 
-			try {
-				$document->setContent(
-					// 20220219 Pass content of inflated drawio graph xml
-					base64_encode($content), IIndexDocument::ENCODED_BASE64
-				);
-			} catch (NotPermittedException|LockedException $e) {
-			}
-		} else {
-			try {
-				$document->setContent(
-					base64_encode($file->getContent()), IIndexDocument::ENCODED_BASE64
-				);
-			} catch (NotPermittedException|LockedException $e) {
+			if ($diagramXml !== null) {
+				$result .= ' ' . $this->readDrawioXmlValue($diagramXml);
 			}
 		}
+
+		return trim($result);
 	}
 
 	// 20220220 Read Draw.io XML elements and return a space separated
 	// strings, stripped of HTML tags, to be indexed.
 	/**
-	 * @param SimpleXMLElement $element
+	 * @param \SimpleXMLElement $element
 	 *
 	 * @return string
 	 */
-	private function readDrawioXmlValue(\SimpleXMLElement $element) {
+	private function readDrawioXmlValue(\SimpleXMLElement $element): string {
 		$str = '';
 		if ($element['value'] !== null && trim(strval($element['value'])) !== '') {
 			$str = $str . ' ' . trim(strval($element['value']));
 		}
-		if ($element !== null && trim(strval($element)) !== '') {
+		if (trim(strval($element)) !== '') {
 			$str = $str . ' ' . trim(strval($element));
 		}
 
-		try {
-			foreach ($element->children() as $child) {
-				$str = $str . ' ' . $this->readDrawioXmlValue($child);
-			}
-		} finally {
+		foreach ($element->children() as $child) {
+			$str = $str . ' ' . $this->readDrawioXmlValue($child);
 		}
 
 		// Strip HTML tags
 		$str_without_tags = preg_replace('/<[^>]*>/', ' ', $str);
 
-		return $str_without_tags;
+		return $str_without_tags ?? '';
 	}
 
 	/**
@@ -997,7 +1084,6 @@ class FilesService {
 		} catch (NotPermittedException|LockedException $e) {
 		}
 	}
-
 
 	/**
 	 * @param FilesDocument $document
@@ -1034,7 +1120,6 @@ class FilesService {
 		}
 	}
 
-
 	/**
 	 * @param FilesDocument $document
 	 *
@@ -1051,7 +1136,6 @@ class FilesService {
 		return true;
 	}
 
-
 	/**
 	 * @param IIndex $index
 	 */
@@ -1063,7 +1147,6 @@ class FilesService {
 		$this->groupFoldersService->impersonateOwner($index);
 		$this->externalFilesService->impersonateOwner($index);
 	}
-
 
 	/**
 	 * @param $action
@@ -1078,7 +1161,6 @@ class FilesService {
 
 		$this->runner->updateAction($action, $force);
 	}
-
 
 	/**
 	 * @param array $data
@@ -1112,7 +1194,6 @@ class FilesService {
 		$this->logger->debug('content error', ['exception' => $t]);
 	}
 
-
 	/**
 	 * @param IIndex $index
 	 */
@@ -1131,28 +1212,35 @@ class FilesService {
 		}
 	}
 
-
 	/**
 	 * @param Folder $node
 	 */
 	private function updateDirectoryMeta(Folder $node) {
 		try {
 			$files = $node->getDirectoryListing();
-		} catch (NotFoundException $e) {
+		} catch (Throwable $e) {
 			return;
 		}
 
 		foreach ($files as $file) {
 			try {
-				$this->fullTextSearchManager->updateIndexStatus(
-					'files', (string)$file->getId(), IIndex::INDEX_META
+				$fileId = $file->getId();
+				$userId = $file->getOwner()?->getUID() ?? '';
+				if ($fileId < 0 || $userId === '') {
+					continue;
+				}
+
+				$this->fullTextSearchManager->createIndex(
+					'files', (string)$fileId, $userId, IIndex::INDEX_META,
 				);
-			} catch (InvalidPathException $e) {
-			} catch (NotFoundException $e) {
+			} catch (Throwable $e) {
+				$this->logger->warning('Could not update a child file index', [
+					'fileId' => $file->getId(),
+					'exception' => $e,
+				]);
 			}
 		}
 	}
-
 
 	/**
 	 * @param IIndex $index
@@ -1168,7 +1256,6 @@ class FilesService {
 
 		$this->runner->newIndexError($index, $message, $exception, $sev);
 	}
-
 
 	/**
 	 * @param Node $file
@@ -1189,12 +1276,10 @@ class FilesService {
 			return;
 		}
 		$parentPath = ltrim(str_replace('//', '/', $parent->getPath()), '/');
-		$path = substr($parent->getPath(), 8 + strpos($parentPath, '/'));
-		if (is_string($path)) {
+		if (preg_match('#^[^/]+/files(?:/|$)#', $parentPath) === 1) {
 			$this->isNodeIndexable($parent);
 		}
 	}
-
 
 	/**
 	 * @param string $path
@@ -1204,17 +1289,21 @@ class FilesService {
 	 * @return string
 	 */
 	private function getPathFromRoot(string $path, string $userId, bool $entrySlash = false): string {
-		// TODO: better way to do this : we remove the '/userid/files/'
-		// TODO: do we need userId, or can we crop the path like in isNodeIndexable()
-		$path = substr($path, 8 + strlen($userId));
-		if (!is_string($path)) {
-			$path = '';
+		$userFolder = $this->rootFolder->getUserFolder($userId);
+		$relativePath = $userFolder->getRelativePath($path);
+		if ($relativePath === null) {
+			$this->logger->warning('Cannot create an index path outside the user folder', [
+				'path' => $path,
+				'userId' => $userId,
+			]);
+
+			return '';
 		}
 
-		$result = (($entrySlash) ? '/' : '') . $path;
+		$result = ($entrySlash ? '/' : '') . ltrim($relativePath, '/');
 		$this->logger->debug(
 			'getPathFromRoot', [
-				'path' => $path,
+				'path' => $relativePath,
 				'userId' => $userId,
 				'entrySlash' => $entrySlash,
 				'result' => $result
@@ -1224,7 +1313,4 @@ class FilesService {
 		return $result;
 	}
 
-	public function secureUsername(string $username): string {
-		return str_replace('.', '\.', $username);
-	}
 }

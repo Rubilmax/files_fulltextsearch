@@ -9,10 +9,8 @@ declare(strict_types=1);
 
 namespace OCA\Files_FullTextSearch\Service;
 
-use Exception;
 use OCA\Files_External\Lib\StorageConfig;
 use OCA\Files_External\Service\GlobalStoragesService;
-use OCA\Files_External\Service\UserGlobalStoragesService;
 use OCA\Files_FullTextSearch\ConfigLexicon;
 use OCA\Files_FullTextSearch\Exceptions\ExternalMountNotFoundException;
 use OCA\Files_FullTextSearch\Exceptions\ExternalMountWithNoViewerException;
@@ -21,28 +19,21 @@ use OCA\Files_FullTextSearch\Exceptions\KnownFileSourceException;
 use OCA\Files_FullTextSearch\Model\FilesDocument;
 use OCA\Files_FullTextSearch\Model\MountPoint;
 use OCA\Files_FullTextSearch\Tools\Traits\TArrayTools;
-use OCP\App\IAppManager;
-use OCP\Files\IRootFolder;
 use OCP\Files\Node;
 use OCP\FullTextSearch\Model\IIndex;
 use OCP\IGroupManager;
 use OCP\IUserManager;
-use OCP\Share\IManager;
 use Psr\Log\LoggerInterface;
+use Throwable;
 
 class ExternalFilesService {
 	use TArrayTools;
 
 	public function __construct(
-		private IRootFolder $rootFolder,
-		private IAppManager $appManager,
-		private IUserManager $userManager,
 		private IGroupManager $groupManager,
-		private IManager $shareManager,
+		private IUserManager $userManager,
 		private LocalFilesService $localFilesService,
-		private ?UserGlobalStoragesService $userGlobalStoragesService,
 		private ?GlobalStoragesService $globalStoragesService,
-		private ConfigService $configService,
 		private LoggerInterface $logger,
 	) {
 	}
@@ -68,7 +59,6 @@ class ExternalFilesService {
 		throw new KnownFileSourceException();
 	}
 
-
 	/**
 	 * @param FilesDocument $document
 	 * @param array $users
@@ -80,7 +70,6 @@ class ExternalFilesService {
 
 		$this->localFilesService->getSharedUsersFromAccess($document->getAccess(), $users);
 	}
-
 
 	/**
 	 * @param FilesDocument $document
@@ -105,7 +94,7 @@ class ExternalFilesService {
 		}
 
 		// twist 'n tweak.
-		if (!$mount->isGlobal()) {
+		if (!$mount->isGlobal() && $mount->getUsers() !== []) {
 			$access->setOwnerId($mount->getUsers()[0]);
 		}
 
@@ -113,7 +102,6 @@ class ExternalFilesService {
 			->addOptionInt('external_mount_id', $mount->getId());
 		$document->setAccess($access);
 	}
-
 
 	/**
 	 * @param MountPoint $mount
@@ -140,7 +128,6 @@ class ExternalFilesService {
 		return false;
 	}
 
-
 	/**
 	 * @param Node $file
 	 *
@@ -158,10 +145,9 @@ class ExternalFilesService {
 					->getMountId()
 			);
 		} catch (ExternalMountNotFoundException $e) {
-			throw new FileIsNotIndexableException('issue while getMountPoint');
+			throw new FileIsNotIndexableException('issue while getMountPoint', 0, $e);
 		}
 	}
-
 
 	/**
 	 * @param int $externalMountId
@@ -183,13 +169,12 @@ class ExternalFilesService {
 				->setGroups($mount->getApplicableGroups())
 				->setUsers($mount->getApplicableUsers())
 				->setGlobal(($mount->getType() === StorageConfig::MOUNT_TYPE_ADMIN));
-		} catch (Exception $e) {
-			throw new ExternalMountNotFoundException();
+		} catch (Throwable $e) {
+			throw new ExternalMountNotFoundException('Could not load external mount', 0, $e);
 		}
 
 		return $mountPoint;
 	}
-
 
 	/**
 	 * @param IIndex $index
@@ -208,10 +193,13 @@ class ExternalFilesService {
 
 		try {
 			$index->setOwnerId($this->getRandomUserFromMountPoint($mount));
-		} catch (Exception $e) {
+		} catch (ExternalMountWithNoViewerException $e) {
+			$this->logger->warning('Could not find a viewer for an external storage index', [
+				'mountId' => $mount->getId(),
+				'exception' => $e,
+			]);
 		}
 	}
-
 
 	/**
 	 * @param MountPoint $mount
@@ -221,20 +209,30 @@ class ExternalFilesService {
 	 */
 	private function getRandomUserFromMountPoint(MountPoint $mount): string {
 		$users = $mount->getUsers();
-		if (sizeof($users) > 0) {
-			return $users[0];
+		foreach ($users as $userId) {
+			if ($userId !== 'all' && $this->userManager->get($userId) !== null) {
+				return $userId;
+			}
 		}
 
 		$groups = $mount->getGroups();
-		if (sizeof($groups) === 0) {
-			$groups = ['admin'];
-		}
-
 		foreach ($groups as $groupName) {
 			$group = $this->groupManager->get($groupName);
+			if ($group === null) {
+				continue;
+			}
+
 			$users = $group->getUsers();
-			if (sizeof($users) > 0) {
-				return array_keys($users)[0];
+			$user = reset($users);
+			if ($user !== false) {
+				return $user->getUID();
+			}
+		}
+
+		if ($mount->isGlobal() && $groups === []) {
+			$user = $this->userManager->searchDisplayName('', 1, 0)[0] ?? null;
+			if ($user !== null) {
+				return $user->getUID();
 			}
 		}
 

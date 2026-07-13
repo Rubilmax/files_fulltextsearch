@@ -9,12 +9,11 @@ declare(strict_types=1);
 
 namespace OCA\Files_FullTextSearch\Listeners;
 
+use OCA\Files_Trashbin\Events\NodeRestoredEvent;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
+use OCP\Files\Events\Node\NodeCopiedEvent;
 use OCP\Files\Events\Node\NodeCreatedEvent;
-use OCP\Files\InvalidPathException;
-use OCP\Files\NotFoundException;
-use OCP\FullTextSearch\Model\IIndex;
 
 /**
  * Class FileCreated
@@ -23,27 +22,28 @@ use OCP\FullTextSearch\Model\IIndex;
  */
 class FileCreated extends ListenersCore implements IEventListener {
 
-
 	/**
 	 * @param Event $event
 	 */
 	public function handle(Event $event): void {
-		if (!$this->registerFullTextSearchServices() || !($event instanceof NodeCreatedEvent)) {
+		if (!$this->registerFullTextSearchServices()) {
 			return;
 		}
 
-		$node = $event->getNode();
-		$user = $this->userSession->getUser();
-		if ($user === null) {
+		if ($event instanceof NodeCreatedEvent) {
+			$node = $event->getNode();
+		} elseif ($event instanceof NodeCopiedEvent || $event instanceof NodeRestoredEvent) {
+			$node = $event->getTarget();
+		} else {
 			return;
 		}
 
-		try {
-			$this->fullTextSearchManager->createIndex(
-				'files', (string)$node->getId(), $user->getUID(), IIndex::INDEX_FULL
-			);
-		} catch (InvalidPathException|NotFoundException $e) {
-			$this->logger->warning('issue while updating index status', ['exception' => $e]);
+		if ($node->getName() === '.noindex') {
+			$this->createIndexesForNode($node->getParent());
+
+			return;
 		}
+
+		$this->createIndexesForNode($node);
 	}
 }

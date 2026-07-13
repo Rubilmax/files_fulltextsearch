@@ -4,7 +4,7 @@
  */
 
 .icon-fts-files {
-	background-image: url('/apps/files_fulltextsearch/img/files.svg');
+	background-image: url('../img/files.svg');
 }
 
 .files_header {

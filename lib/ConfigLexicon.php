@@ -15,7 +15,7 @@ use OCP\Config\Lexicon\Strictness;
 use OCP\Config\ValueType;
 
 /**
- * Config Lexicon for fulltextsearch_elasticsearch.
+ * Config lexicon for files_fulltextsearch.
  *
  * Please Add & Manage your Config Keys in that file and keep the Lexicon up to date!
  */

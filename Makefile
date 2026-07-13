@@ -8,10 +8,10 @@ source_dir=$(build_dir)/source
 sign_dir=$(build_dir)/sign
 package_name=$(shell echo $(app_name) | tr '[:upper:]' '[:lower:]')
 cert_dir=$(HOME)/.nextcloud/certificates
-github_account=nextcloud
-release_account=nextcloud-releases
-branch=master
-version=34.0.0-dev.0
+github_account=Rubilmax
+release_account=
+branch=main
+version=34.0.0
 since_tag=
 
 all: appstore
@@ -73,8 +73,7 @@ clean:
 
 # composer packages
 composer:
-	composer install --prefer-dist --no-dev
-	composer upgrade --prefer-dist --no-dev
+	composer install --prefer-dist --no-dev --optimize-autoloader
 
 cs-check: composer-dev
 	composer cs:check
@@ -83,13 +82,13 @@ cs-fix: composer-dev
 	composer cs:fix
 
 composer-dev:
-	composer install --prefer-dist --dev
-	composer upgrade --prefer-dist --dev
+	composer install --prefer-dist
 
 appstore: clean composer
 	mkdir -p $(sign_dir)
-	rsync -a \
+	rsync -a --prune-empty-dirs \
 	--exclude=/build \
+	--exclude=/.context \
 	--exclude=/docs \
 	--exclude=/translationfiles \
 	--exclude=/.tx \
@@ -105,9 +104,12 @@ appstore: clean composer
 	--exclude=/composer.lock \
 	--exclude=/.gitattributes \
 	--exclude=/.gitignore \
+	--exclude=/.php-cs-fixer.cache \
+	--exclude=/.php-cs-fixer.dist.php \
 	--exclude=/.scrutinizer.yml \
 	--exclude=/.travis.yml \
 	--exclude=/Makefile \
+	--exclude='/test.*' \
 	./ $(sign_dir)/$(package_name)
 	tar -czf $(build_dir)/$(package_name).tar.gz \
 		-C $(sign_dir) $(package_name)

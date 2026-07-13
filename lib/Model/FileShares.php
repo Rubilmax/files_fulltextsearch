@@ -18,19 +18,13 @@ use JsonSerializable;
  */
 class FileShares implements JsonSerializable {
 
+	private array $users = [];
 
-	/** @var array */
-	private $users = [];
+	private array $groups = [];
 
-	/** @var array */
-	private $groups = [];
+	private array $circles = [];
 
-	/** @var array */
-	private $circles = [];
-
-	/** @var array */
-	private $links = [];
-
+	private array $links = [];
 
 	/**
 	 * FileShares constructor.
@@ -48,14 +42,12 @@ class FileShares implements JsonSerializable {
 		$this->setLinks($currentShares->getLinks());
 	}
 
-
 	/**
 	 * @return array
 	 */
 	public function getUsers(): array {
 		return $this->users;
 	}
-
 
 	/**
 	 * @param array $users
@@ -74,13 +66,12 @@ class FileShares implements JsonSerializable {
 	 * @return $this
 	 */
 	public function addUser(string $user): FileShares {
-		if (!in_array($user, $this->users)) {
+		if (!in_array($user, $this->users, true)) {
 			array_push($this->users, $user);
 		}
 
 		return $this;
 	}
-
 
 	/**
 	 * @return array
@@ -106,13 +97,12 @@ class FileShares implements JsonSerializable {
 	 * @return $this
 	 */
 	public function addGroup(string $group): FileShares {
-		if (!in_array($group, $this->groups)) {
+		if (!in_array($group, $this->groups, true)) {
 			array_push($this->groups, $group);
 		}
 
 		return $this;
 	}
-
 
 	/**
 	 * @return array
@@ -138,13 +128,12 @@ class FileShares implements JsonSerializable {
 	 * @return $this
 	 */
 	public function addCircle(string $circle): FileShares {
-		if (!in_array($circle, $this->circles)) {
+		if (!in_array($circle, $this->circles, true)) {
 			array_push($this->circles, $circle);
 		}
 
 		return $this;
 	}
-
 
 	/**
 	 * @return array
@@ -170,13 +159,12 @@ class FileShares implements JsonSerializable {
 	 * @return FileShares
 	 */
 	public function addLink(string $link): FileShares {
-		if (!in_array($link, $this->links)) {
+		if (!in_array($link, $this->links, true)) {
 			array_push($this->links, $link);
 		}
 
 		return $this;
 	}
-
 
 	/**
 	 * @return array

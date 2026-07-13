@@ -69,11 +69,11 @@ trait TArrayTools {
 			}
 		}
 
-		if ($arr[$k] === null) {
+		if (!is_int($arr[$k]) && !(is_string($arr[$k]) && preg_match('/^-?\d+$/D', $arr[$k]) === 1)) {
 			return $default;
 		}
 
-		return intval($arr[$k]);
+		return (int)$arr[$k];
 	}
 
 	protected function getFloat(string $k, array $arr, float $default = 0): float {
@@ -95,11 +95,11 @@ trait TArrayTools {
 			}
 		}
 
-		if ($arr[$k] === null) {
+		if (!is_int($arr[$k]) && !is_float($arr[$k]) && !is_numeric($arr[$k])) {
 			return $default;
 		}
 
-		return intval($arr[$k]);
+		return (float)$arr[$k];
 	}
 
 	protected function getBool(string $k, array $arr, bool $default = false): bool {
@@ -110,7 +110,12 @@ trait TArrayTools {
 					return $default;
 				}
 
-				return $this->getBool($subs[1], $arr[$subs[0]], $default);
+				$r = $arr[$subs[0]];
+				if (!is_array($r)) {
+					return $default;
+				}
+
+				return $this->getBool($subs[1], $r, $default);
 			} else {
 				return $default;
 			}
@@ -122,6 +127,10 @@ trait TArrayTools {
 
 		if (is_bool($arr[$k])) {
 			return $arr[$k];
+		}
+
+		if (!is_int($arr[$k]) && !is_string($arr[$k])) {
+			return $default;
 		}
 
 		$sk = (string)$arr[$k];
@@ -144,13 +153,18 @@ trait TArrayTools {
 					return $default;
 				}
 
-				return $this->getObj($subs[1], $arr[$subs[0]], $default);
+				$r = $arr[$subs[0]];
+				if (!is_array($r)) {
+					return $default;
+				}
+
+				return $this->getObj($subs[1], $r, $default);
 			} else {
 				return $default;
 			}
 		}
 
-		return $arr[$k];
+		return $arr[$k] instanceof JsonSerializable ? $arr[$k] : $default;
 	}
 
 	protected function getArray(string $k, array $arr, array $default = []): array {
@@ -210,7 +224,6 @@ trait TArrayTools {
 		return false;
 	}
 
-
 	/**
 	 * @param string $k
 	 * @param array $arr
@@ -237,7 +250,6 @@ trait TArrayTools {
 		return $r;
 	}
 
-
 	/**
 	 * @param string $k
 	 * @param string $value
@@ -259,7 +271,6 @@ trait TArrayTools {
 
 		throw new ArrayNotFoundException();
 	}
-
 
 	/**
 	 * @param string $key
@@ -316,7 +327,6 @@ trait TArrayTools {
 		throw new ItemNotFoundException();
 	}
 
-
 	/**
 	 * @param array $keys
 	 * @param array $arr
@@ -332,7 +342,6 @@ trait TArrayTools {
 			}
 		}
 	}
-
 
 	/**
 	 * @param array $arr

@@ -11,10 +11,10 @@ namespace OCA\Files_FullTextSearch\Listeners;
 
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
-use OCP\Files\InvalidPathException;
-use OCP\Files\NotFoundException;
 use OCP\FullTextSearch\Model\IIndex;
 use OCP\Share\Events\ShareDeletedEvent;
+use OCP\Share\Events\ShareDeletedFromSelfEvent;
+use Throwable;
 
 /**
  * Class ShareDeleted
@@ -23,25 +23,20 @@ use OCP\Share\Events\ShareDeletedEvent;
  */
 class ShareDeleted extends ListenersCore implements IEventListener {
 
-
 	/**
 	 * @param Event $event
 	 */
 	public function handle(Event $event): void {
-		if (!$this->registerFullTextSearchServices() || !($event instanceof ShareDeletedEvent)) {
+		if (!$this->registerFullTextSearchServices()
+			|| (!$event instanceof ShareDeletedEvent && !$event instanceof ShareDeletedFromSelfEvent)) {
 			return;
 		}
 
 		$share = $event->getShare();
 		try {
-			$node = $share->getNode();
-			$this->fullTextSearchManager->updateIndexStatus(
-				'files',
-				(string)$node->getId(),
-				IIndex::INDEX_META
-			);
-		} catch (InvalidPathException|NotFoundException $e) {
-			$this->logger->warning('issue while updating index status', ['exception' => $e]);
+			$this->createIndexesForNode($share->getNode(), IIndex::INDEX_META);
+		} catch (Throwable $e) {
+			$this->logger->warning('Could not update indexes after a share was deleted', ['exception' => $e]);
 		}
 	}
 }

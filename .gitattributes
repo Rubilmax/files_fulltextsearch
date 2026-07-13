@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Nextcloud GmbH and Nextcloud contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Composer's canonical MIT license text intentionally ends with a blank line.
+vendor/composer/LICENSE whitespace=-blank-at-eof

@@ -18,22 +18,17 @@ use JsonSerializable;
  */
 class MountPoint implements JsonSerializable {
 
+	private int $id = 0;
 
-	/** @var int */
-	private $id;
+	private string $path = '';
 
-	/** @var string */
-	private $path = '';
+	private bool $global = false;
 
-	/** @var bool */
-	private $global = false;
+	private array $groups = [];
 
-	/** @var array */
-	private $groups = [];
+	private array $circles = [];
 
-	/** @var array */
-	private $users = [];
-
+	private array $users = [];
 
 	/**
 	 * @return int
@@ -53,7 +48,6 @@ class MountPoint implements JsonSerializable {
 		return $this;
 	}
 
-
 	/**
 	 * @return string
 	 */
@@ -71,7 +65,6 @@ class MountPoint implements JsonSerializable {
 
 		return $this;
 	}
-
 
 	/**
 	 * @return bool
@@ -91,9 +84,8 @@ class MountPoint implements JsonSerializable {
 		return $this;
 	}
 
-
 	/**
-	 * @return array'
+	 * @return array
 	 */
 	public function getGroups(): array {
 		return $this->groups;
@@ -110,6 +102,23 @@ class MountPoint implements JsonSerializable {
 		return $this;
 	}
 
+	/**
+	 * @return array
+	 */
+	public function getCircles(): array {
+		return $this->circles;
+	}
+
+	/**
+	 * @param array $circles
+	 *
+	 * @return $this
+	 */
+	public function setCircles(array $circles): MountPoint {
+		$this->circles = $circles;
+
+		return $this;
+	}
 
 	/**
 	 * @return array
@@ -129,19 +138,6 @@ class MountPoint implements JsonSerializable {
 		return $this;
 	}
 
-
-	/**
-	 *
-	 */
-	public function __destruct() {
-		unset($this->id);
-		unset($this->path);
-		unset($this->global);
-		unset($this->groups);
-		unset($this->users);
-	}
-
-
 	/**
 	 * @return array
 	 */
@@ -151,6 +147,7 @@ class MountPoint implements JsonSerializable {
 			'path' => $this->getPath(),
 			'global' => $this->isGlobal(),
 			'groups' => $this->getGroups(),
+			'circles' => $this->getCircles(),
 			'users' => $this->getUsers()
 		];
 	}

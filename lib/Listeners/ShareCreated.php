@@ -9,11 +9,13 @@ declare(strict_types=1);
 
 namespace OCA\Files_FullTextSearch\Listeners;
 
-use Exception;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
 use OCP\FullTextSearch\Model\IIndex;
+use OCP\Share\Events\ShareAcceptedEvent;
 use OCP\Share\Events\ShareCreatedEvent;
+use OCP\Share\Events\ShareTransferredEvent;
+use Throwable;
 
 /**
  * Class ShareCreated
@@ -22,23 +24,22 @@ use OCP\Share\Events\ShareCreatedEvent;
  */
 class ShareCreated extends ListenersCore implements IEventListener {
 
-
 	/**
 	 * @param Event $event
 	 */
 	public function handle(Event $event): void {
-		if (!$this->registerFullTextSearchServices() || !($event instanceof ShareCreatedEvent)) {
+		if (!$this->registerFullTextSearchServices()
+			|| (!$event instanceof ShareCreatedEvent
+				&& !$event instanceof ShareAcceptedEvent
+				&& !$event instanceof ShareTransferredEvent)) {
 			return;
 		}
 
 		$share = $event->getShare();
 		try {
-			$node = $share->getNode();
-			$this->fullTextSearchManager->updateIndexStatus(
-				'files', (string)$node->getId(), IIndex::INDEX_META
-			);
-		} catch (Exception $e) {
-			$this->logger->warning('issue while updating index status', ['exception' => $e]);
+			$this->createIndexesForNode($share->getNode(), IIndex::INDEX_META);
+		} catch (Throwable $e) {
+			$this->logger->warning('Could not update indexes after a share was created', ['exception' => $e]);
 		}
 	}
 }

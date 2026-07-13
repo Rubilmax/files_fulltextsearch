@@ -9,7 +9,6 @@ declare(strict_types=1);
 
 namespace OCA\Files_FullTextSearch\Service;
 
-use Exception;
 use OCA\Files_FullTextSearch\ConfigLexicon;
 use OCA\Files_FullTextSearch\Exceptions\FileIsNotIndexableException;
 use OCA\Files_FullTextSearch\Exceptions\GroupFolderNotFoundException;
@@ -33,20 +32,22 @@ class GroupFoldersService {
 	private array $groupFolders = [];
 
 	public function __construct(
-		IAppManager $appManager,
+		private IAppManager $appManager,
 		private IGroupManager $groupManager,
 		private LocalFilesService $localFilesService,
 		IAppConfig $appConfig,
 		private LoggerInterface $logger,
 	) {
-		if ($appConfig->getAppValueBool(ConfigLexicon::FILES_GROUP_FOLDERS)) {
+		if ($appConfig->getAppValueBool(ConfigLexicon::FILES_GROUP_FOLDERS)
+			&& $this->appManager->isEnabledForAnyone('groupfolders')) {
 			try {
+				$this->appManager->loadApp('groupfolders');
 				$this->folderManager = \OCP\Server::get(FolderManager::class);
-			} catch (Exception) {
+			} catch (\Throwable $e) {
+				$this->logger->warning('Could not load Team Folders integration', ['exception' => $e]);
 			}
 		}
 	}
-
 
 	/**
 	 * @param string $userId
@@ -60,7 +61,6 @@ class GroupFoldersService {
 		$this->groupFolders = $this->getMountPoints($userId);
 		$this->logger->debug('initGroupSharesForUser result', ['groupFolders' => $this->groupFolders]);
 	}
-
 
 	/**
 	 * @param Node $file
@@ -85,7 +85,6 @@ class GroupFoldersService {
 		throw new KnownFileSourceException();
 	}
 
-
 	/**
 	 * @param FilesDocument $document
 	 * @param Node $file
@@ -103,18 +102,16 @@ class GroupFoldersService {
 
 		$access = $document->getAccess();
 		foreach ($mount->getGroups() as $group) {
-			if ($this->groupManager->get($group) === null) {
-				$access->addCircle($group);
-			} else {
-				$access->addGroup($group);
-			}
+			$access->addGroup($group);
+		}
+		foreach ($mount->getCircles() as $circle) {
+			$access->addCircle($circle);
 		}
 
 		$document->getIndex()
 			->addOptionInt('group_folder_id', $mount->getId());
 		$document->setAccess($access);
 	}
-
 
 	/**
 	 * @param FilesDocument $document
@@ -128,7 +125,6 @@ class GroupFoldersService {
 		$this->localFilesService->getSharedUsersFromAccess($document->getAccess(), $users);
 	}
 
-
 	/**
 	 * @param Node $file
 	 *
@@ -136,8 +132,20 @@ class GroupFoldersService {
 	 * @throws FileIsNotIndexableException
 	 */
 	private function getMountPoint(Node $file): MountPoint {
+		$mountPoint = $file->getMountPoint();
+		$folderId = method_exists($mountPoint, 'getFolderId') ? $mountPoint->getFolderId() : null;
+		if (is_int($folderId)) {
+			foreach ($this->groupFolders as $mount) {
+				if ($mount->getId() === $folderId) {
+					return $mount;
+				}
+			}
+		}
+
+		$filePath = rtrim($file->getPath(), '/');
 		foreach ($this->groupFolders as $mount) {
-			if (str_starts_with($file->getPath(), $mount->getPath())) {
+			$mountPath = rtrim($mount->getPath(), '/');
+			if ($filePath === $mountPath || str_starts_with($filePath, $mountPath . '/')) {
 				return $mount;
 			}
 		}
@@ -145,28 +153,50 @@ class GroupFoldersService {
 		throw new FileIsNotIndexableException();
 	}
 
-
 	/**
 	 * @param string $userId
 	 *
 	 * @return MountPoint[]
 	 */
 	private function getMountPoints(string $userId): array {
+		if ($this->folderManager === null) {
+			return [];
+		}
+
 		$mountPoints = [];
 		$mounts = $this->folderManager->getAllFolders();
 
-		foreach ($mounts as $path => $mount) {
+		foreach ($mounts as $mount) {
+			$mount = $this->normalizeFolder($mount);
+			if ($mount === []) {
+				continue;
+			}
+
+			$groups = [];
+			$circles = [];
+			foreach ($this->getArray('groups', $mount) as $id => $details) {
+				if (!is_string($id)) {
+					continue;
+				}
+
+				$type = is_array($details) ? $this->get('type', $details, 'group') : 'group';
+				if ($type === 'circle') {
+					$circles[] = $id;
+				} else {
+					$groups[] = $id;
+				}
+			}
+
 			$mountPoint = new MountPoint();
-			$mount = $mount->toArray();
 			$mountPoint->setId($this->getInt('id', $mount, -1))
-				->setPath('/' . $userId . '/files/' . $mount['mount_point'])
-				->setGroups(array_keys($mount['groups']));
+				->setPath('/' . $userId . '/files/' . $this->get('mount_point', $mount))
+				->setGroups($groups)
+				->setCircles($circles);
 			$mountPoints[] = $mountPoint;
 		}
 
 		return $mountPoints;
 	}
-
 
 	/**
 	 * @param IIndex $index
@@ -187,9 +217,28 @@ class GroupFoldersService {
 			return;
 		}
 
-		$index->setOwnerId($this->getRandomUserFromGroups(array_keys($mount['groups'])));
-	}
+		try {
+			$users = $this->folderManager->searchUsers($groupFolderId, '', 1, 0);
+			$ownerId = isset($users[0]) ? $this->get('uid', $users[0]) : '';
+		} catch (\Throwable $e) {
+			$this->logger->warning('Could not find a Team Folder viewer', [
+				'folderId' => $groupFolderId,
+				'exception' => $e,
+			]);
+			$ownerId = '';
+		}
 
+		if ($ownerId === '') {
+			$groups = array_filter(
+				$this->getArray('groups', $mount),
+				static fn (mixed $details): bool => !is_array($details) || ($details['type'] ?? 'group') === 'group',
+			);
+			$ownerId = $this->getRandomUserFromGroups(array_keys($groups));
+		}
+		if ($ownerId !== '') {
+			$index->setOwnerId($ownerId);
+		}
+	}
 
 	/**
 	 * @param int $groupFolderId
@@ -198,20 +247,20 @@ class GroupFoldersService {
 	 * @throws GroupFolderNotFoundException
 	 */
 	private function getGroupFolderById(int $groupFolderId): array {
-		if ($groupFolderId === 0) {
+		if ($groupFolderId === 0 || $this->folderManager === null) {
 			throw new GroupFolderNotFoundException();
 		}
 
 		$mounts = $this->folderManager->getAllFolders();
-		foreach ($mounts as $path => $mount) {
-			if ($mount['id'] === $groupFolderId) {
+		foreach ($mounts as $mount) {
+			$mount = $this->normalizeFolder($mount);
+			if ($this->getInt('id', $mount) === $groupFolderId) {
 				return $mount;
 			}
 		}
 
 		throw new GroupFolderNotFoundException();
 	}
-
 
 	/**
 	 * @param array $groups
@@ -221,12 +270,31 @@ class GroupFoldersService {
 	private function getRandomUserFromGroups(array $groups): string {
 		foreach ($groups as $groupName) {
 			$group = $this->groupManager->get($groupName);
+			if ($group === null) {
+				continue;
+			}
+
 			$users = $group->getUsers();
-			if (sizeof($users) > 0) {
-				return array_keys($users)[0];
+			$user = reset($users);
+			if ($user !== false) {
+				return $user->getUID();
 			}
 		}
 
 		return '';
+	}
+
+	private function normalizeFolder(mixed $folder): array {
+		if (is_array($folder)) {
+			return $folder;
+		}
+
+		if (is_object($folder) && is_callable([$folder, 'toArray'])) {
+			$data = $folder->toArray();
+
+			return is_array($data) ? $data : [];
+		}
+
+		return [];
 	}
 }

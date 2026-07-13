@@ -12,8 +12,6 @@ namespace OCA\Files_FullTextSearch\Listeners;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
 use OCP\Files\Events\Node\NodeRenamedEvent;
-use OCP\Files\InvalidPathException;
-use OCP\Files\NotFoundException;
 use OCP\FullTextSearch\Model\IIndex;
 
 /**
@@ -23,7 +21,6 @@ use OCP\FullTextSearch\Model\IIndex;
  */
 class FileRenamed extends ListenersCore implements IEventListener {
 
-
 	/**
 	 * @param Event $event
 	 */
@@ -32,13 +29,17 @@ class FileRenamed extends ListenersCore implements IEventListener {
 			return;
 		}
 
-		$node = $event->getTarget();
-		try {
-			$this->fullTextSearchManager->updateIndexStatus(
-				'files', (string)$node->getId(), IIndex::INDEX_META
-			);
-		} catch (InvalidPathException|NotFoundException $e) {
-			$this->logger->warning('issue while updating index status', ['exception' => $e]);
+		$source = $event->getSource();
+		$target = $event->getTarget();
+		if ($source->getName() === '.noindex') {
+			$this->createIndexesForNode($source->getParent());
 		}
+		if ($target->getName() === '.noindex') {
+			$this->createIndexesForNode($target->getParent(), IIndex::INDEX_META);
+
+			return;
+		}
+
+		$this->createIndexesForNode($target, IIndex::INDEX_META);
 	}
 }

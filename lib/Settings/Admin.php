@@ -9,46 +9,109 @@ declare(strict_types=1);
 
 namespace OCA\Files_FullTextSearch\Settings;
 
-use Exception;
-use OCA\Files_FullTextSearch\AppInfo\Application;
-use OCP\AppFramework\Http\TemplateResponse;
-use OCP\Settings\ISettings;
+use InvalidArgumentException;
+use OCA\Files_FullTextSearch\ConfigLexicon;
+use OCA\Files_FullTextSearch\Service\ConfigService;
+use OCP\IL10N;
+use OCP\IUser;
+use OCP\Settings\DeclarativeSettingsTypes;
+use OCP\Settings\IDeclarativeSettingsFormWithHandlers;
 
 /**
- * Class Admin
- *
- * @package OCA\Files_FullTextSearch\Settings
+ * Nextcloud-native, automatically saved administration settings.
  */
-class Admin implements ISettings {
+class Admin implements IDeclarativeSettingsFormWithHandlers {
 	public function __construct(
+		private readonly IL10N $l10n,
+		private readonly ConfigService $configService,
 	) {
 	}
 
-	/**
-	 * @return TemplateResponse
-	 * @throws Exception
-	 */
-	public function getForm(): TemplateResponse {
-		return new TemplateResponse(Application::APP_ID, 'settings.admin', []);
+	public function getSchema(): array {
+		return [
+			'id' => 'files',
+			'priority' => 51,
+			'section_type' => DeclarativeSettingsTypes::SECTION_TYPE_ADMIN,
+			'section_id' => 'fulltextsearch',
+			'storage_type' => DeclarativeSettingsTypes::STORAGE_TYPE_EXTERNAL,
+			'title' => $this->l10n->t('Files'),
+			'doc_url' => 'https://github.com/nextcloud/files_fulltextsearch/wiki',
+			'fields' => [
+				[
+					'id' => ConfigLexicon::FILES_LOCAL,
+					'title' => $this->l10n->t('Local Files'),
+					'description' => $this->l10n->t('Index the content of local files.'),
+					'type' => DeclarativeSettingsTypes::CHECKBOX,
+					'default' => true,
+				],
+				[
+					'id' => ConfigLexicon::FILES_EXTERNAL,
+					'title' => $this->l10n->t('External Files'),
+					'type' => DeclarativeSettingsTypes::RADIO,
+					'default' => 0,
+					'options' => [
+						[
+							'name' => $this->l10n->t('Index path only'),
+							'value' => 0,
+						],
+						[
+							'name' => $this->l10n->t('Index path and content'),
+							'value' => 1,
+						],
+						[
+							'name' => $this->l10n->t('Do not index path nor content'),
+							'value' => 2,
+						],
+					],
+				],
+				[
+					'id' => ConfigLexicon::FILES_GROUP_FOLDERS,
+					'title' => $this->l10n->t('Team Folders'),
+					'description' => $this->l10n->t('Index the content of Team Folders.'),
+					'type' => DeclarativeSettingsTypes::CHECKBOX,
+					'default' => false,
+				],
+				[
+					'id' => ConfigLexicon::FILES_SIZE,
+					'title' => $this->l10n->t('Maximum file size'),
+					'description' => $this->l10n->t('Maximum file size to index (in MB).'),
+					'type' => DeclarativeSettingsTypes::NUMBER,
+					'default' => 20,
+				],
+				[
+					'id' => ConfigLexicon::FILES_PDF,
+					'title' => $this->l10n->t('Extract PDF'),
+					'description' => $this->l10n->t('Index the content of PDF files.'),
+					'type' => DeclarativeSettingsTypes::CHECKBOX,
+					'default' => true,
+				],
+				[
+					'id' => ConfigLexicon::FILES_OFFICE,
+					'title' => $this->l10n->t('Extract Office'),
+					'description' => $this->l10n->t('Index the content of office files.'),
+					'type' => DeclarativeSettingsTypes::CHECKBOX,
+					'default' => true,
+				],
+				[
+					'id' => ConfigLexicon::FILES_OPEN_RESULT_DIRECTLY,
+					'title' => $this->l10n->t('Open Files'),
+					'description' => $this->l10n->t('Directly from search results.'),
+					'type' => DeclarativeSettingsTypes::CHECKBOX,
+					'default' => false,
+				],
+			],
+		];
 	}
 
-
-	/**
-	 * @return string the section ID, e.g. 'sharing'
-	 */
-	public function getSection(): string {
-		return 'fulltextsearch';
+	public function getValue(string $fieldId, IUser $user): bool|int {
+		return $this->configService->getValue($fieldId);
 	}
 
+	public function setValue(string $fieldId, mixed $value, IUser $user): void {
+		if (!is_bool($value) && !is_int($value) && !is_string($value)) {
+			throw new InvalidArgumentException('Unsupported settings value');
+		}
 
-	/**
-	 * @return int whether the form should be rather on the top or bottom of
-	 *             the admin section. The forms are arranged in ascending order of the
-	 *             priority values. It is required to return a value between 0 and 100.
-	 *
-	 * keep the server setting at the top, right after "server settings"
-	 */
-	public function getPriority(): int {
-		return 51;
+		$this->configService->setValue($fieldId, $value);
 	}
 }

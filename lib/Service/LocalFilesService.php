@@ -22,7 +22,6 @@ use OCP\IGroupManager;
 use OCP\IUserManager;
 use OCP\Share\IManager;
 use OCP\Share\IShare;
-use Psr\Log\LoggerInterface;
 
 /**
  * Class LocalFilesService
@@ -35,10 +34,8 @@ class LocalFilesService {
 		private IUserManager $userManager,
 		private IManager $shareManager,
 		private SharesRequest $sharesRequest,
-		private LoggerInterface $logger,
 	) {
 	}
-
 
 	/**
 	 * @param Node $file
@@ -57,7 +54,6 @@ class LocalFilesService {
 		throw new KnownFileSourceException();
 	}
 
-
 	/**
 	 * @param FilesDocument $document
 	 * @param Node $file
@@ -67,10 +63,6 @@ class LocalFilesService {
 		if ($file->getOwner() !== null) {
 			$ownerId = $file->getOwner()
 				->getUID();
-		}
-
-		if (!is_string($ownerId)) {
-			$ownerId = '';
 		}
 
 		$access = new DocumentAccess($ownerId);
@@ -84,7 +76,6 @@ class LocalFilesService {
 
 		$document->setAccess($access);
 	}
-
 
 	/**
 	 * @param Node $file
@@ -102,18 +93,13 @@ class LocalFilesService {
 		}
 
 		foreach ($shares['users'] ?? [] as $user => $node) {
-			if (!is_string($user)) {
-				$this->logger->warning('malformed access list: ' . json_encode($shares));
-				continue;
-			}
-			if (in_array($user, $users) || $this->userManager->get($user) === null) {
+			if (in_array($user, $users, true) || $this->userManager->get($user) === null) {
 				continue;
 			}
 
 			$users[] = $user;
 		}
 	}
-
 
 	/**
 	 * same a getShareUsers, but we do it 'manually'
@@ -129,12 +115,11 @@ class LocalFilesService {
 		);
 
 		foreach ($result as $user) {
-			if (!in_array($user, $users)) {
+			if (!in_array($user, $users, true)) {
 				$users[] = $user;
 			}
 		}
 	}
-
 
 	/**
 	 * @param IDocumentAccess $access
@@ -160,7 +145,6 @@ class LocalFilesService {
 		return $result;
 	}
 
-
 	/**
 	 * // TODO: get users from circles.
 	 *
@@ -174,7 +158,6 @@ class LocalFilesService {
 		return $result;
 	}
 
-
 	/**
 	 * @param Node $file
 	 * @param FileShares $fileShares
@@ -185,7 +168,11 @@ class LocalFilesService {
 		}
 
 		// we get shares from parent first
-		$this->getSharesFromFile($file->getParent(), $fileShares);
+		try {
+			$this->getSharesFromFile($file->getParent(), $fileShares);
+		} catch (Exception) {
+			return;
+		}
 
 		$shares = $this->sharesRequest->getFromFile($file);
 		foreach ($shares as $share) {
@@ -200,7 +187,6 @@ class LocalFilesService {
 		}
 	}
 
-
 	/**
 	 * @param array $share
 	 * @param FileShares $fileShares
@@ -210,9 +196,10 @@ class LocalFilesService {
 			return;
 		}
 
-		$fileShares->addUser($share['share_with']);
+		if (is_string($share['share_with'] ?? null) && $share['share_with'] !== '') {
+			$fileShares->addUser($share['share_with']);
+		}
 	}
-
 
 	/**
 	 * @param array $share
@@ -223,9 +210,10 @@ class LocalFilesService {
 			return;
 		}
 
-		$fileShares->addGroup($share['share_with']);
+		if (is_string($share['share_with'] ?? null) && $share['share_with'] !== '') {
+			$fileShares->addGroup($share['share_with']);
+		}
 	}
-
 
 	/**
 	 * @param array $share
@@ -236,9 +224,10 @@ class LocalFilesService {
 			return;
 		}
 
-		$fileShares->addCircle($share['share_with']);
+		if (is_string($share['share_with'] ?? null) && $share['share_with'] !== '') {
+			$fileShares->addCircle($share['share_with']);
+		}
 	}
-
 
 	/**
 	 * @param array $share
@@ -249,6 +238,8 @@ class LocalFilesService {
 			return;
 		}
 
-		$fileShares->addLink($share['token']);
+		if (is_string($share['token'] ?? null) && $share['token'] !== '') {
+			$fileShares->addLink($share['token']);
+		}
 	}
 }

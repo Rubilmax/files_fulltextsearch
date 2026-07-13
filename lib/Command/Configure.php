@@ -10,8 +10,9 @@ declare(strict_types=1);
 namespace OCA\Files_FullTextSearch\Command;
 
 use Exception;
-use OC\Core\Command\Base;
+use JsonException;
 use OCA\Files_FullTextSearch\Service\ConfigService;
+use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -21,24 +22,21 @@ use Symfony\Component\Console\Output\OutputInterface;
  *
  * @package OCA\Files_FullTextSearch\Command
  */
-class Configure extends Base {
+class Configure extends Command {
 	public function __construct(
 		private ConfigService $configService,
 	) {
 		parent::__construct();
 	}
 
-
 	/**
 	 *
 	 */
-	protected function configure() {
-		parent::configure();
+	protected function configure(): void {
 		$this->setName('files_fulltextsearch:configure')
 			->addArgument('json', InputArgument::REQUIRED, 'set config')
 			->setDescription('Configure the installation');
 	}
-
 
 	/**
 	 * @param InputInterface $input
@@ -47,12 +45,20 @@ class Configure extends Base {
 	 * @return int
 	 * @throws Exception
 	 */
-	protected function execute(InputInterface $input, OutputInterface $output) {
-		if ($input->getArgument('json')) {
-			$this->configService->setConfig(json_decode($input->getArgument('json') ?? '', true) ?? []);
+	protected function execute(InputInterface $input, OutputInterface $output): int {
+		$json = $input->getArgument('json');
+		if (!is_string($json)) {
+			throw new JsonException('Configuration must be a JSON object');
 		}
 
-		$output->writeln(json_encode($this->configService->getConfig(), JSON_PRETTY_PRINT));
+		$config = json_decode($json, false, flags: JSON_THROW_ON_ERROR);
+		if (!$config instanceof \stdClass) {
+			throw new JsonException('Configuration must be a JSON object');
+		}
+
+		$this->configService->setConfig(get_object_vars($config));
+		$output->writeln(json_encode($this->configService->getConfig(), JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR));
+
 		return self::SUCCESS;
 	}
 }

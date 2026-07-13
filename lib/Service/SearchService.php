@@ -11,6 +11,9 @@ namespace OCA\Files_FullTextSearch\Service;
 
 use Exception;
 use OCA\Files_FullTextSearch\ConfigLexicon;
+use OCA\Files_FullTextSearch\Exceptions\EmptyUserException;
+use OCA\Files_FullTextSearch\Exceptions\FileIsNotIndexableException;
+use OCA\Files_FullTextSearch\Exceptions\FilesNotFoundException;
 use OCA\Files_FullTextSearch\Model\FilesDocument;
 use OCP\AppFramework\Services\IAppConfig;
 use OCP\Files\FileInfo;
@@ -19,9 +22,11 @@ use OCP\Files\Node;
 use OCP\FullTextSearch\Model\ISearchRequest;
 use OCP\FullTextSearch\Model\ISearchResult;
 use OCP\IConfig;
+use OCP\ITagManager;
 use OCP\IURLGenerator;
 use OCP\IUserSession;
 use Psr\Log\LoggerInterface;
+use Throwable;
 
 /**
  * Class SearchService
@@ -30,34 +35,33 @@ use Psr\Log\LoggerInterface;
  */
 class SearchService {
 	private string $userId;
+	/** @var array<int, true>|null */
+	private ?array $favoriteIds = null;
 
 	public function __construct(
-		IUserSession $userSession,
+		private IUserSession $userSession,
 		private IMimeTypeDetector $mimeTypeDetector,
-		private IUrlGenerator $urlGenerator,
+		private IURLGenerator $urlGenerator,
 		private readonly IAppConfig $appConfig,
 		private FilesService $filesService,
 		private IConfig $config,
+		private ITagManager $tagManager,
 		private ExtensionService $extensionService,
 		private LoggerInterface $logger,
 	) {
-		$user = $userSession->getUser();
-		$this->userId = $user?->getUID() ?? '';
+		$this->userId = '';
 	}
-
 
 	/**
 	 * @param ISearchRequest $request
 	 */
 	public function improveSearchRequest(ISearchRequest $request) {
-        $request->addWildcardField('title');
+		$request->addWildcardField('title');
 
 		$this->searchQueryInOptions($request);
 		$this->searchQueryFiltersExtension($request);
 		$this->searchQueryFiltersSource($request);
-		if ($this->userId === '') {
-			$this->userId = $this->filesService->secureUsername($request->getAuthor());
-		}
+		$this->userId = $this->userSession->getUser()?->getUID() ?? $request->getAuthor();
 		$request->addPart('comments');
 		$this->extensionService->searchRequest($request);
 	}
@@ -71,14 +75,12 @@ class SearchService {
 			return;
 		}
 
-		$username = $this->filesService->secureUsername($request->getAuthor());
 		$request->addRegexFilters(
 			[
-				['title' => '.*\.' . $extension]
+				['title' => '.*\.' . preg_quote(ltrim($extension, '.'), '/') . '$']
 			]
 		);
 	}
-
 
 	/**
 	 * @param ISearchRequest $request
@@ -87,8 +89,6 @@ class SearchService {
 		$local = $request->getOption('files_local');
 		$external = $request->getOption('files_external');
 		$groupFolders = $request->getOption('files_group_folders');
-		$federated = $request->getOption('files_federated');
-
 		if (count(array_unique([$local, $external, $groupFolders])) === 1) {
 			return;
 		}
@@ -97,7 +97,6 @@ class SearchService {
 		$this->addMetaTagToSearchRequest($request, 'files_external', (int)$external);
 		$this->addMetaTagToSearchRequest($request, 'files_group_folders', (int)$groupFolders);
 	}
-
 
 	/**
 	 * @param ISearchRequest $request
@@ -114,7 +113,6 @@ class SearchService {
 		}
 	}
 
-
 	/**
 	 * @param ISearchRequest $request
 	 * @param string $tag
@@ -126,11 +124,14 @@ class SearchService {
 		}
 	}
 
-
 	/**
 	 * @param ISearchResult $searchResult
 	 */
 	public function improveSearchResult(ISearchResult $searchResult) {
+		$this->userId = $this->userSession->getUser()?->getUID()
+			?? $searchResult->getRequest()->getAuthor();
+		$this->favoriteIds = null;
+
 		$indexDocuments = $searchResult->getDocuments();
 		$filesDocuments = [];
 		foreach ($indexDocuments as $indexDocument) {
@@ -155,7 +156,10 @@ class SearchService {
 				);
 
 				$filesDocuments[] = $filesDocument;
-			} catch (Exception $e) {
+			} catch (FilesNotFoundException|EmptyUserException|FileIsNotIndexableException $e) {
+				// The viewer no longer has access to this stale search result.
+				continue;
+			} catch (Throwable $e) {
 				$this->logger->warning('Exception while improving searchresult', ['exception' => $e]);
 			}
 		}
@@ -163,7 +167,6 @@ class SearchService {
 		$searchResult->setDocuments($filesDocuments);
 		$this->extensionService->searchResult($searchResult);
 	}
-
 
 	/**
 	 * @param FilesDocument $document
@@ -178,7 +181,6 @@ class SearchService {
 		$this->setDocumentInfoFromFile($document, $file);
 	}
 
-
 	/**
 	 * @param FilesDocument $document
 	 * @param Node $file
@@ -188,21 +190,24 @@ class SearchService {
 			return;
 		}
 
-		// TODO: better way to do this : we remove the '/userId/files/'
-		$path = substr($file->getPath(), 7 + strlen($this->userId));
-		$path = rtrim(str_replace('//', '/', $path), '/');
+		$path = $this->filesService->getRelativePath($this->userId, $file);
 		$pathInfo = pathinfo($path);
 
 		$document->setPath($path);
 		$document->setInfo('path', $path)
 			->setInfo('type', $file->getType())
 			->setInfo('file', $pathInfo['basename'])
-			->setInfo('dir', $pathInfo['dirname'])
+			->setInfo('dir', $pathInfo['dirname'] ?? '')
 			->setInfo('mime', $file->getMimetype())
-			->setInfoBool('favorite', false); // FIXME: get the favorite status
+			->setInfoBool('favorite', $this->isFavorite((int)$file->getId()));
 
 		try {
-			$document->setInfoInt('size', $file->getSize())
+			$fileSize = $file->getSize();
+			if (is_float($fileSize)) {
+				$fileSize = $fileSize >= PHP_INT_MAX ? PHP_INT_MAX : (int)$fileSize;
+			}
+
+			$document->setInfoInt('size', $fileSize)
 				->setInfoInt('mtime', $file->getMTime())
 				->setInfo('etag', $file->getEtag())
 				->setInfoInt('permissions', $file->getPermissions());
@@ -210,67 +215,43 @@ class SearchService {
 		}
 	}
 
-
 	/**
 	 * @param FilesDocument $document
 	 */
 	private function setDocumentTitle(FilesDocument $document) {
-		if (!is_null($document->getPath()) && $document->getPath() !== '') {
+		if ($document->getPath() !== '') {
 			$document->setTitle(ltrim(str_replace('//', '/', $document->getPath()), '/'));
-		} else {
-			$document->setTitle($document->getTitle());
 		}
 	}
-
 
 	/**
 	 * @param FilesDocument $document
 	 */
 	private function setDocumentLink(FilesDocument $document) {
-		$path = $document->getPath();
-		$filename = $document->getInfo('file');
-		$dir = substr($path, 0, -strlen($filename));
+		$params = ['fileid' => $document->getId()];
+		if ($document->getInfo('type') === FileInfo::TYPE_FILE
+			&& !$this->appConfig->getAppValueBool(ConfigLexicon::FILES_OPEN_RESULT_DIRECTLY)) {
+			$params['openfile'] = 'false';
+		}
 
-		$this->setDocumentLinkDir($document, $dir);
-		$this->setDocumentLinkFile($document, $dir, $filename);
+		$link = $this->urlGenerator->linkToRoute('files.View.showFile', $params);
+		$document->setLink($this->urlGenerator->getAbsoluteURL($link));
 	}
 
-
-	/**
-	 * @param FilesDocument $document
-	 * @param string $dir
-	 * @param string $filename
-	 */
-	private function setDocumentLinkFile(FilesDocument $document, string $dir, string $filename) {
-		if ($document->getInfo('type') !== 'file') {
-			return;
+	private function isFavorite(int $fileId): bool {
+		if ($this->favoriteIds === null) {
+			$this->favoriteIds = [];
+			try {
+				$tags = $this->tagManager->load('files', [], false, $this->userId);
+				foreach ($tags?->getFavorites() ?? [] as $favoriteId) {
+					$this->favoriteIds[(int)$favoriteId] = true;
+				}
+			} catch (Throwable $e) {
+				$this->logger->warning('Could not load favorite files for search results', ['exception' => $e]);
+			}
 		}
 
-
-		if (!$this->appConfig->getAppValueBool(ConfigLexicon::FILES_OPEN_RESULT_DIRECTLY)) {
-			$link = $this->urlGenerator->linkToRoute('files.view.index', ['dir' => $dir, 'scrollto' => $filename]);
-		} else {
-			$link = $this->urlGenerator->linkToRoute('files.View.showFile', ['fileid' => $document->getId()]);
-		}
-
-		$document->setLink($link);
-	}
-
-
-	/**
-	 * @param FilesDocument $document
-	 * @param string $dir
-	 */
-	private function setDocumentLinkDir(FilesDocument $document, string $dir) {
-		if ($document->getInfo('type') !== 'dir') {
-			return;
-		}
-
-		$document->setLink(
-			$this->urlGenerator->linkToRoute(
-				'files.view.index', ['dir' => $dir, 'fileid' => $document->getId()]
-			)
-		);
+		return isset($this->favoriteIds[$fileId]);
 	}
 
 	/**
@@ -279,6 +260,6 @@ class SearchService {
 	 * @return string
 	 */
 	private function getWebdavId(int $fileId): string {
-		return sprintf('%08s', $fileId) . $this->config->getSystemValue('instanceid');
+		return sprintf('%08s', $fileId) . $this->config->getSystemValueString('instanceid');
 	}
 }

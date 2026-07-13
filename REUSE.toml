@@ -24,6 +24,12 @@ SPDX-FileCopyrightText = "2018 Nextcloud GmbH and Nextcloud contributors"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
 
 [[annotations]]
+path = ["vendor/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["Nils Adermann", "Jordi Boggiano"]
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
 path = ["test.drawio", "test.xml"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2022 Nextcloud GmbH and Nextcloud contributors"

@@ -11,7 +11,6 @@ namespace OCA\Files_FullTextSearch\Provider;
 
 use OC\FullTextSearch\Model\SearchOption;
 use OC\FullTextSearch\Model\SearchTemplate;
-use OC\User\NoUserException;
 use OCA\Files_FullTextSearch\ConfigLexicon;
 use OCA\Files_FullTextSearch\Exceptions\FileIsNotIndexableException;
 use OCA\Files_FullTextSearch\Model\FilesDocument;
@@ -141,13 +140,13 @@ class FilesProvider implements IFullTextSearchProvider {
 		if ($this->appConfig->getAppValueBool(ConfigLexicon::FILES_GROUP_FOLDERS)) {
 			$template->addPanelOption(
 				new SearchOption(
-					'files_group_folders', $this->l10n->t('Within group folders'),
+					'files_group_folders', $this->l10n->t('Within Team Folders'),
 					ISearchOption::CHECKBOX
 				)
 			);
 			$template->addNavigationOption(
 				new SearchOption(
-					'files_group_folders', $this->l10n->t('Group folders'),
+					'files_group_folders', $this->l10n->t('Team Folders'),
 					ISearchOption::CHECKBOX
 				)
 			);
@@ -169,13 +168,11 @@ class FilesProvider implements IFullTextSearchProvider {
 		return $template;
 	}
 
-
 	/**
 	 *
 	 */
 	public function loadProvider() {
 	}
-
 
 	/**
 	 * @param string $userId
@@ -192,7 +189,6 @@ class FilesProvider implements IFullTextSearchProvider {
 		return $chunks;
 	}
 
-
 	/**
 	 * @param string $userId
 	 *
@@ -202,7 +198,6 @@ class FilesProvider implements IFullTextSearchProvider {
 	 * @throws InvalidPathException
 	 * @throws NotFoundException
 	 * @throws NotPermittedException
-	 * @throws NoUserException
 	 */
 	public function generateIndexableDocuments(string $userId, string $chunk): array {
 		$this->logger->debug('generateIndexableDocuments request', ['userId' => $userId, 'chunk' => $chunk]);
@@ -211,7 +206,6 @@ class FilesProvider implements IFullTextSearchProvider {
 
 		return $documents;
 	}
-
 
 	/**
 	 * @param IIndexDocument $document
@@ -229,7 +223,6 @@ class FilesProvider implements IFullTextSearchProvider {
 		$this->logger->debug('fillIndexDocument result', ['document' => $document]);
 	}
 
-
 	/**
 	 * @param IIndexDocument $document
 	 *
@@ -242,7 +235,6 @@ class FilesProvider implements IFullTextSearchProvider {
 
 		return $result;
 	}
-
 
 	/**
 	 * @param IIndex $index
@@ -261,13 +253,11 @@ class FilesProvider implements IFullTextSearchProvider {
 		return $document;
 	}
 
-
 	/**
 	 * @param IFullTextSearchPlatform $platform
 	 */
 	public function onInitializingIndex(IFullTextSearchPlatform $platform) {
 	}
-
 
 	/**
 	 * @param IFullTextSearchPlatform $platform
@@ -275,23 +265,20 @@ class FilesProvider implements IFullTextSearchProvider {
 	public function onResettingIndex(IFullTextSearchPlatform $platform) {
 	}
 
-
 	/**
 	 * not used yet
 	 */
 	public function unloadProvider() {
 	}
 
-
 	/**
 	 * before a search, improve the request
 	 *
-	 * @param ISearchRequest $request
+	 * @param ISearchRequest $searchRequest
 	 */
 	public function improveSearchRequest(ISearchRequest $searchRequest) {
 		$this->searchService->improveSearchRequest($searchRequest);
 	}
-
 
 	/**
 	 * after a search, improve results
@@ -301,7 +288,6 @@ class FilesProvider implements IFullTextSearchProvider {
 	public function improveSearchResult(ISearchResult $searchResult) {
 		$this->searchService->improveSearchResult($searchResult);
 	}
-
 
 	/**
 	 * @param string $info

@@ -5,6 +5,18 @@
 # Changelog
 
 
+### 34.0.0
+
+- Add Nextcloud 34 and PHP 8.2+ compatibility
+- Replace the legacy jQuery administration panel with native declarative settings and autosave
+- Package the production Composer autoloader for direct installation in `apps/`
+- Allow future Nextcloud and PHP versions by default while using public APIs wherever available
+- Fix Team Folders 22 and circle access mapping, external-storage owner impersonation, and pending or expired share access
+- Fix missing folder and ancestor documents, JSON/YAML indexing, `.noindex` transitions, and transient-storage data loss
+- Recursively handle copy, restore, rename, delete, touch, and share lifecycle events
+- Fix malformed search links, stale-result log noise, favorite metadata, and legacy extension-event delivery
+
+
 ### 27.0.0
 
 - compat nc27
@@ -230,4 +242,3 @@ First stable release
 ### BETA v0.3.0
 
 - First Beta
-
