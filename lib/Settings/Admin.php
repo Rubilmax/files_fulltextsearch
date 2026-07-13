@@ -12,6 +12,7 @@ namespace OCA\Files_FullTextSearch\Settings;
 use InvalidArgumentException;
 use OCA\Files_FullTextSearch\ConfigLexicon;
 use OCA\Files_FullTextSearch\Service\ConfigService;
+use OCP\IL10N;
 use OCP\IUser;
 use OCP\Settings\DeclarativeSettingsTypes;
 use OCP\Settings\IDeclarativeSettingsFormWithHandlers;
@@ -42,6 +43,7 @@ class Admin implements IDeclarativeSettingsFormWithHandlers {
 
 	public function __construct(
 		private ConfigService $configService,
+		private IL10N $l10n,
 	) {
 	}
 
@@ -52,59 +54,59 @@ class Admin implements IDeclarativeSettingsFormWithHandlers {
 			'section_type' => DeclarativeSettingsTypes::SECTION_TYPE_ADMIN,
 			'section_id' => 'fulltextsearch',
 			'storage_type' => DeclarativeSettingsTypes::STORAGE_TYPE_EXTERNAL,
-			'title' => 'Files',
+			'title' => $this->l10n->t('Files'),
 			'fields' => [
 				[
 					'id' => ConfigLexicon::FILES_LOCAL,
-					'title' => 'Local Files',
-					'description' => 'Index the content of local files.',
+					'title' => $this->l10n->t('Local Files'),
+					'description' => $this->l10n->t('Index the content of local files.'),
 					'type' => DeclarativeSettingsTypes::CHECKBOX,
 					'default' => true,
 				],
 				[
 					'id' => ConfigLexicon::FILES_EXTERNAL,
-					'title' => 'External Files',
-					'description' => 'Index the content of external files.',
+					'title' => $this->l10n->t('External Files'),
+					'description' => $this->l10n->t('Index the content of external files.'),
 					'type' => DeclarativeSettingsTypes::RADIO,
 					'options' => [
-						['name' => 'Index path only', 'value' => 0],
-						['name' => 'Index path and content', 'value' => 1],
-						['name' => 'Do not index path nor content', 'value' => 2],
+						['name' => $this->l10n->t('Index path only'), 'value' => 0],
+						['name' => $this->l10n->t('Index path and content'), 'value' => 1],
+						['name' => $this->l10n->t('Do not index path nor content'), 'value' => 2],
 					],
 					'default' => 0,
 				],
 				[
 					'id' => ConfigLexicon::FILES_GROUP_FOLDERS,
-					'title' => 'Group Folders',
-					'description' => 'Index the content of group folders.',
+					'title' => $this->l10n->t('Group Folders'),
+					'description' => $this->l10n->t('Index the content of group folders.'),
 					'type' => DeclarativeSettingsTypes::CHECKBOX,
 					'default' => false,
 				],
 				[
 					'id' => ConfigLexicon::FILES_SIZE,
-					'title' => 'Maximum file size',
-					'description' => 'Maximum file size to index (in Mb).',
+					'title' => $this->l10n->t('Maximum file size'),
+					'description' => $this->l10n->t('Maximum file size to index (in Mb).'),
 					'type' => DeclarativeSettingsTypes::NUMBER,
 					'default' => 20,
 				],
 				[
 					'id' => ConfigLexicon::FILES_PDF,
-					'title' => 'Extract PDF',
-					'description' => 'Index the content of PDF files.',
+					'title' => $this->l10n->t('Extract PDF'),
+					'description' => $this->l10n->t('Index the content of PDF files.'),
 					'type' => DeclarativeSettingsTypes::CHECKBOX,
 					'default' => true,
 				],
 				[
 					'id' => ConfigLexicon::FILES_OFFICE,
-					'title' => 'Extract Office',
-					'description' => 'Index the content of office files.',
+					'title' => $this->l10n->t('Extract Office'),
+					'description' => $this->l10n->t('Index the content of office files.'),
 					'type' => DeclarativeSettingsTypes::CHECKBOX,
 					'default' => true,
 				],
 				[
 					'id' => ConfigLexicon::FILES_OPEN_RESULT_DIRECTLY,
-					'title' => 'Open Files',
-					'description' => 'Directly from search results.',
+					'title' => $this->l10n->t('Open Files'),
+					'description' => $this->l10n->t('Directly from search results.'),
 					'type' => DeclarativeSettingsTypes::CHECKBOX,
 					'default' => false,
 				],

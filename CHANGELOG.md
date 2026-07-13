@@ -5,6 +5,11 @@
 # Changelog
 
 
+### 34.0.2
+
+- Translate all displayed admin settings strings
+
+
 ### 34.0.1
 
 - Fix admin settings autosave on Nextcloud 34
