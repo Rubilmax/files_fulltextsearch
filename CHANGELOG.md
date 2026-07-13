@@ -5,6 +5,11 @@
 # Changelog
 
 
+### 34.0.1
+
+- Fix admin settings autosave on Nextcloud 34
+
+
 ### 27.0.0
 
 - compat nc27
@@ -230,4 +235,3 @@ First stable release
 ### BETA v0.3.0
 
 - First Beta
-

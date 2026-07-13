@@ -11,7 +11,7 @@ cert_dir=$(HOME)/.nextcloud/certificates
 github_account=nextcloud
 release_account=nextcloud-releases
 branch=master
-version=34.0.0-dev.0
+version=34.0.1
 since_tag=
 
 all: appstore
@@ -74,7 +74,6 @@ clean:
 # composer packages
 composer:
 	composer install --prefer-dist --no-dev
-	composer upgrade --prefer-dist --no-dev
 
 cs-check: composer-dev
 	composer cs:check
@@ -93,6 +92,7 @@ appstore: clean composer
 	--exclude=/docs \
 	--exclude=/translationfiles \
 	--exclude=/.tx \
+	--exclude=/.context \
 	--exclude=/tests \
 	--exclude=.git \
 	--exclude=/.github \

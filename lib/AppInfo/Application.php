@@ -16,6 +16,7 @@ use OCA\Files_FullTextSearch\Listeners\FileDeleted;
 use OCA\Files_FullTextSearch\Listeners\FileRenamed;
 use OCA\Files_FullTextSearch\Listeners\ShareCreated;
 use OCA\Files_FullTextSearch\Listeners\ShareDeleted;
+use OCA\Files_FullTextSearch\Settings\Admin;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
 use OCP\AppFramework\Bootstrap\IBootstrap;
@@ -59,6 +60,7 @@ class Application extends App implements IBootstrap {
 		$context->registerEventListener(ShareCreatedEvent::class, ShareCreated::class);
 		$context->registerEventListener(ShareDeletedEvent::class, ShareDeleted::class);
 		$context->registerConfigLexicon(ConfigLexicon::class);
+		$context->registerDeclarativeSettings(Admin::class);
 	}
 
 
