@@ -20,58 +20,37 @@ use OCP\FullTextSearch\Model\ISearchRequest;
 use OCP\FullTextSearch\Model\ISearchResult;
 use OCP\IConfig;
 use OCP\IURLGenerator;
-use OCP\IUserSession;
 use Psr\Log\LoggerInterface;
 
-/**
- * Class SearchService
- *
- * @package OCA\Files_FullTextSearch\Service
- */
 class SearchService {
-	private string $userId;
-
 	public function __construct(
-		IUserSession $userSession,
-		private IMimeTypeDetector $mimeTypeDetector,
-		private IUrlGenerator $urlGenerator,
+		private readonly IMimeTypeDetector $mimeTypeDetector,
+		private readonly IURLGenerator $urlGenerator,
 		private readonly IAppConfig $appConfig,
-		private FilesService $filesService,
-		private IConfig $config,
-		private ExtensionService $extensionService,
-		private LoggerInterface $logger,
+		private readonly FilesService $filesService,
+		private readonly IConfig $config,
+		private readonly ExtensionService $extensionService,
+		private readonly LoggerInterface $logger,
 	) {
-		$user = $userSession->getUser();
-		$this->userId = $user?->getUID() ?? '';
 	}
 
-
-	/**
-	 * @param ISearchRequest $request
-	 */
-	public function improveSearchRequest(ISearchRequest $request) {
-        $request->addWildcardField('title');
+	public function improveSearchRequest(ISearchRequest $request): void {
+		$request->addWildcardField('title');
 
 		$this->searchQueryInOptions($request);
 		$this->searchQueryFiltersExtension($request);
 		$this->searchQueryFiltersSource($request);
-		if ($this->userId === '') {
-			$this->userId = $this->filesService->secureUsername($request->getAuthor());
-		}
 		$request->addPart('comments');
 		$this->extensionService->searchRequest($request);
 	}
 
-	/**
-	 * @param ISearchRequest $request
-	 */
-	private function searchQueryFiltersExtension(ISearchRequest $request) {
+	private function searchQueryFiltersExtension(ISearchRequest $request): void {
 		$extension = $request->getOption('files_extension');
 		if ($extension === '') {
 			return;
 		}
 
-		$username = $this->filesService->secureUsername($request->getAuthor());
+		$this->filesService->secureUsername($request->getAuthor());
 		$request->addRegexFilters(
 			[
 				['title' => '.*\.' . $extension]
@@ -79,15 +58,11 @@ class SearchService {
 		);
 	}
 
-
-	/**
-	 * @param ISearchRequest $request
-	 */
-	private function searchQueryFiltersSource(ISearchRequest $request) {
+	private function searchQueryFiltersSource(ISearchRequest $request): void {
 		$local = $request->getOption('files_local');
 		$external = $request->getOption('files_external');
 		$groupFolders = $request->getOption('files_group_folders');
-		$federated = $request->getOption('files_federated');
+		$request->getOption('files_federated');
 
 		if (count(array_unique([$local, $external, $groupFolders])) === 1) {
 			return;
@@ -98,11 +73,7 @@ class SearchService {
 		$this->addMetaTagToSearchRequest($request, 'files_group_folders', (int)$groupFolders);
 	}
 
-
-	/**
-	 * @param ISearchRequest $request
-	 */
-	private function searchQueryInOptions(ISearchRequest $request) {
+	private function searchQueryInOptions(ISearchRequest $request): void {
 		$in = $request->getOptionArray('in', []);
 
 		if (in_array('filename', $in)) {
@@ -114,29 +85,21 @@ class SearchService {
 		}
 	}
 
-
-	/**
-	 * @param ISearchRequest $request
-	 * @param string $tag
-	 * @param int $cond
-	 */
-	private function addMetaTagToSearchRequest(ISearchRequest $request, string $tag, int $cond) {
+	private function addMetaTagToSearchRequest(ISearchRequest $request, string $tag, int $cond): void {
 		if ($cond === 1) {
 			$request->addMetaTag($tag);
 		}
 	}
 
+	public function improveSearchResult(ISearchResult $searchResult): void {
+		$userId = $this->filesService->secureUsername($searchResult->getRequest()->getAuthor());
 
-	/**
-	 * @param ISearchResult $searchResult
-	 */
-	public function improveSearchResult(ISearchResult $searchResult) {
 		$indexDocuments = $searchResult->getDocuments();
 		$filesDocuments = [];
 		foreach ($indexDocuments as $indexDocument) {
 			try {
 				$filesDocument = FilesDocument::fromIndexDocument($indexDocument);
-				$this->setDocumentInfo($filesDocument);
+				$this->setDocumentInfo($filesDocument, $userId);
 				$this->setDocumentTitle($filesDocument);
 				$this->setDocumentLink($filesDocument);
 
@@ -164,32 +127,24 @@ class SearchService {
 		$this->extensionService->searchResult($searchResult);
 	}
 
-
 	/**
-	 * @param FilesDocument $document
-	 *
 	 * @throws Exception
 	 */
-	private function setDocumentInfo(FilesDocument $document) {
+	private function setDocumentInfo(FilesDocument $document, string $userId): void {
 		$document->setInfo('webdav', $this->getWebdavId((int)$document->getId()));
 
-		$file = $this->filesService->getFileFromId($this->userId, (int)$document->getId());
+		$file = $this->filesService->getFileFromId($userId, (int)$document->getId());
 
-		$this->setDocumentInfoFromFile($document, $file);
+		$this->setDocumentInfoFromFile($document, $file, $userId);
 	}
 
-
-	/**
-	 * @param FilesDocument $document
-	 * @param Node $file
-	 */
-	private function setDocumentInfoFromFile(FilesDocument $document, Node $file) {
-		if ($this->userId === '') {
+	private function setDocumentInfoFromFile(FilesDocument $document, Node $file, string $userId): void {
+		if ($userId === '') {
 			return;
 		}
 
 		// TODO: better way to do this : we remove the '/userId/files/'
-		$path = substr($file->getPath(), 7 + strlen($this->userId));
+		$path = substr($file->getPath(), 7 + strlen($userId));
 		$path = rtrim(str_replace('//', '/', $path), '/');
 		$pathInfo = pathinfo($path);
 
@@ -206,27 +161,19 @@ class SearchService {
 				->setInfoInt('mtime', $file->getMTime())
 				->setInfo('etag', $file->getEtag())
 				->setInfoInt('permissions', $file->getPermissions());
-		} catch (Exception $e) {
+		} catch (Exception) {
 		}
 	}
 
-
-	/**
-	 * @param FilesDocument $document
-	 */
-	private function setDocumentTitle(FilesDocument $document) {
-		if (!is_null($document->getPath()) && $document->getPath() !== '') {
+	private function setDocumentTitle(FilesDocument $document): void {
+		if ($document->getPath() !== '') {
 			$document->setTitle(ltrim(str_replace('//', '/', $document->getPath()), '/'));
 		} else {
 			$document->setTitle($document->getTitle());
 		}
 	}
 
-
-	/**
-	 * @param FilesDocument $document
-	 */
-	private function setDocumentLink(FilesDocument $document) {
+	private function setDocumentLink(FilesDocument $document): void {
 		$path = $document->getPath();
 		$filename = $document->getInfo('file');
 		$dir = substr($path, 0, -strlen($filename));
@@ -235,17 +182,10 @@ class SearchService {
 		$this->setDocumentLinkFile($document, $dir, $filename);
 	}
 
-
-	/**
-	 * @param FilesDocument $document
-	 * @param string $dir
-	 * @param string $filename
-	 */
-	private function setDocumentLinkFile(FilesDocument $document, string $dir, string $filename) {
+	private function setDocumentLinkFile(FilesDocument $document, string $dir, string $filename): void {
 		if ($document->getInfo('type') !== 'file') {
 			return;
 		}
-
 
 		if (!$this->appConfig->getAppValueBool(ConfigLexicon::FILES_OPEN_RESULT_DIRECTLY)) {
 			$link = $this->urlGenerator->linkToRoute('files.view.index', ['dir' => $dir, 'scrollto' => $filename]);
@@ -256,12 +196,7 @@ class SearchService {
 		$document->setLink($link);
 	}
 
-
-	/**
-	 * @param FilesDocument $document
-	 * @param string $dir
-	 */
-	private function setDocumentLinkDir(FilesDocument $document, string $dir) {
+	private function setDocumentLinkDir(FilesDocument $document, string $dir): void {
 		if ($document->getInfo('type') !== 'dir') {
 			return;
 		}
@@ -273,11 +208,6 @@ class SearchService {
 		);
 	}
 
-	/**
-	 * @param int $fileId
-	 *
-	 * @return string
-	 */
 	private function getWebdavId(int $fileId): string {
 		return sprintf('%08s', $fileId) . $this->config->getSystemValue('instanceid');
 	}

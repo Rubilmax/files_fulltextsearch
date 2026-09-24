@@ -25,6 +25,9 @@ class ConfigService {
 	) {
 	}
 
+	/**
+	 * @return array<string, int|bool>
+	 */
 	public function getConfig(): array {
 		return [
 			ConfigLexicon::FILES_LOCAL => $this->appConfig->getAppValueBool(ConfigLexicon::FILES_LOCAL),
@@ -54,31 +57,26 @@ class ConfigService {
 				case ConfigLexicon::FILES_PDF:
 				case ConfigLexicon::FILES_ZIP:
 				case ConfigLexicon::FILES_OPEN_RESULT_DIRECTLY:
-					$this->appConfig->setAppValueBool($k, $save[$k]);
+					$this->appConfig->setAppValueBool($k, (bool)$save[$k]);
 					break;
 			}
 		}
 	}
 
-	public function setDocumentIndexOption(FilesDocument $document, string $option) {
+	public function setDocumentIndexOption(FilesDocument $document, string $option): void {
 		$document->getIndex()->addOption('_' . $option, $this->getCurrentIndexOptionStatus($option) ? '1' : '0');
 	}
 
-	/**
-	 * @param IIndex $index
-	 *
-	 * @return bool
-	 */
 	public function compareIndexOptions(IIndex $index): bool {
 		$options = $index->getOptions();
 
 		$ak = array_keys($options);
 		foreach ($ak as $k) {
-			if (!str_starts_with($k, '_')) {
+			if (!str_starts_with((string)$k, '_')) {
 				continue;
 			}
 
-			$currentValue = $this->getCurrentIndexOptionStatus(substr($k, 1)) ? '1' : '0';
+			$currentValue = $this->getCurrentIndexOptionStatus(substr((string)$k, 1)) ? '1' : '0';
 			if ($options[$k] !== $currentValue) {
 				return false;
 			}

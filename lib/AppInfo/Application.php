@@ -16,7 +16,8 @@ use OCA\Files_FullTextSearch\Listeners\FileDeleted;
 use OCA\Files_FullTextSearch\Listeners\FileRenamed;
 use OCA\Files_FullTextSearch\Listeners\ShareCreated;
 use OCA\Files_FullTextSearch\Listeners\ShareDeleted;
-use OCA\Files_FullTextSearch\Settings\Admin;
+use OCA\Files_FullTextSearch\Listeners\TagAssigned;
+use OCA\Files_FullTextSearch\Listeners\TagUnassigned;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
 use OCP\AppFramework\Bootstrap\IBootstrap;
@@ -27,6 +28,8 @@ use OCP\Files\Events\Node\NodeRenamedEvent;
 use OCP\Files\Events\Node\NodeWrittenEvent;
 use OCP\Share\Events\ShareCreatedEvent;
 use OCP\Share\Events\ShareDeletedEvent;
+use OCP\SystemTag\TagAssignedEvent;
+use OCP\SystemTag\TagUnassignedEvent;
 use Throwable;
 
 /**
@@ -37,20 +40,13 @@ use Throwable;
 class Application extends App implements IBootstrap {
 	public const APP_ID = 'files_fulltextsearch';
 
-
 	/**
 	 * Application constructor.
-	 *
-	 * @param array $params
 	 */
 	public function __construct(array $params = []) {
 		parent::__construct(self::APP_ID, $params);
 	}
 
-
-	/**
-	 * @param IRegistrationContext $context
-	 */
 	public function register(IRegistrationContext $context): void {
 		$context->registerEventListener(NodeCreatedEvent::class, FileCreated::class);
 		$context->registerEventListener(NodeWrittenEvent::class, FileChanged::class);
@@ -59,14 +55,13 @@ class Application extends App implements IBootstrap {
 
 		$context->registerEventListener(ShareCreatedEvent::class, ShareCreated::class);
 		$context->registerEventListener(ShareDeletedEvent::class, ShareDeleted::class);
+
+		$context->registerEventListener(TagAssignedEvent::class, TagAssigned::class);
+		$context->registerEventListener(TagUnassignedEvent::class, TagUnassigned::class);
 		$context->registerConfigLexicon(ConfigLexicon::class);
-		$context->registerDeclarativeSettings(Admin::class);
 	}
 
-
 	/**
-	 * @param IBootContext $context
-	 *
 	 * @throws Throwable
 	 */
 	public function boot(IBootContext $context): void {

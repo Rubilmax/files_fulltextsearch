@@ -4,6 +4,10 @@
 -->
 # Changelog
 
+### 35.0.0
+
+- merge upstream Nextcloud 35 support and bundle the rebuilt settings assets
+
 
 ### 34.0.2
 

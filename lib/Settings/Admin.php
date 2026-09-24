@@ -9,160 +9,53 @@ declare(strict_types=1);
 
 namespace OCA\Files_FullTextSearch\Settings;
 
-use InvalidArgumentException;
-use OCA\Files_FullTextSearch\ConfigLexicon;
+use Exception;
+use OCA\Files_FullTextSearch\AppInfo\Application;
 use OCA\Files_FullTextSearch\Service\ConfigService;
-use OCP\IL10N;
-use OCP\IUser;
-use OCP\Settings\DeclarativeSettingsTypes;
-use OCP\Settings\IDeclarativeSettingsFormWithHandlers;
+use OCP\AppFramework\Http\TemplateResponse;
+use OCP\AppFramework\Services\IInitialState;
+use OCP\Settings\ISettings;
+use OCP\Util;
 
 /**
  * Class Admin
  *
  * @package OCA\Files_FullTextSearch\Settings
  */
-class Admin implements IDeclarativeSettingsFormWithHandlers {
-	private const FIELDS = [
-		ConfigLexicon::FILES_LOCAL,
-		ConfigLexicon::FILES_EXTERNAL,
-		ConfigLexicon::FILES_GROUP_FOLDERS,
-		ConfigLexicon::FILES_SIZE,
-		ConfigLexicon::FILES_PDF,
-		ConfigLexicon::FILES_OFFICE,
-		ConfigLexicon::FILES_OPEN_RESULT_DIRECTLY,
-	];
-
-	private const BOOLEAN_FIELDS = [
-		ConfigLexicon::FILES_LOCAL,
-		ConfigLexicon::FILES_GROUP_FOLDERS,
-		ConfigLexicon::FILES_PDF,
-		ConfigLexicon::FILES_OFFICE,
-		ConfigLexicon::FILES_OPEN_RESULT_DIRECTLY,
-	];
-
+class Admin implements ISettings {
 	public function __construct(
-		private ConfigService $configService,
-		private IL10N $l10n,
+		private readonly ConfigService $configService,
+		private readonly IInitialState $initialStateService,
 	) {
 	}
 
-	public function getSchema(): array {
-		return [
-			'id' => 'files',
-			'priority' => 51,
-			'section_type' => DeclarativeSettingsTypes::SECTION_TYPE_ADMIN,
-			'section_id' => 'fulltextsearch',
-			'storage_type' => DeclarativeSettingsTypes::STORAGE_TYPE_EXTERNAL,
-			'title' => $this->l10n->t('Files'),
-			'fields' => [
-				[
-					'id' => ConfigLexicon::FILES_LOCAL,
-					'title' => $this->l10n->t('Local Files'),
-					'description' => $this->l10n->t('Index the content of local files.'),
-					'type' => DeclarativeSettingsTypes::CHECKBOX,
-					'default' => true,
-				],
-				[
-					'id' => ConfigLexicon::FILES_EXTERNAL,
-					'title' => $this->l10n->t('External Files'),
-					'description' => $this->l10n->t('Index the content of external files.'),
-					'type' => DeclarativeSettingsTypes::RADIO,
-					'options' => [
-						['name' => $this->l10n->t('Index path only'), 'value' => 0],
-						['name' => $this->l10n->t('Index path and content'), 'value' => 1],
-						['name' => $this->l10n->t('Do not index path nor content'), 'value' => 2],
-					],
-					'default' => 0,
-				],
-				[
-					'id' => ConfigLexicon::FILES_GROUP_FOLDERS,
-					'title' => $this->l10n->t('Group Folders'),
-					'description' => $this->l10n->t('Index the content of group folders.'),
-					'type' => DeclarativeSettingsTypes::CHECKBOX,
-					'default' => false,
-				],
-				[
-					'id' => ConfigLexicon::FILES_SIZE,
-					'title' => $this->l10n->t('Maximum file size'),
-					'description' => $this->l10n->t('Maximum file size to index (in Mb).'),
-					'type' => DeclarativeSettingsTypes::NUMBER,
-					'default' => 20,
-				],
-				[
-					'id' => ConfigLexicon::FILES_PDF,
-					'title' => $this->l10n->t('Extract PDF'),
-					'description' => $this->l10n->t('Index the content of PDF files.'),
-					'type' => DeclarativeSettingsTypes::CHECKBOX,
-					'default' => true,
-				],
-				[
-					'id' => ConfigLexicon::FILES_OFFICE,
-					'title' => $this->l10n->t('Extract Office'),
-					'description' => $this->l10n->t('Index the content of office files.'),
-					'type' => DeclarativeSettingsTypes::CHECKBOX,
-					'default' => true,
-				],
-				[
-					'id' => ConfigLexicon::FILES_OPEN_RESULT_DIRECTLY,
-					'title' => $this->l10n->t('Open Files'),
-					'description' => $this->l10n->t('Directly from search results.'),
-					'type' => DeclarativeSettingsTypes::CHECKBOX,
-					'default' => false,
-				],
-			],
-		];
+	/**
+	 * @throws Exception
+	 */
+	public function getForm(): TemplateResponse {
+		$this->initialStateService->provideInitialState('adminConfig', $this->configService->getConfig());
+
+		Util::addScript(Application::APP_ID, 'files_fulltextsearch-settings-admin');
+		Util::addStyle(Application::APP_ID, 'files_fulltextsearch-settings-admin');
+
+		return new TemplateResponse(Application::APP_ID, 'settings.admin', []);
 	}
 
-	public function getValue(string $fieldId, IUser $user): mixed {
-		$this->assertKnownField($fieldId);
-
-		return $this->configService->getConfig()[$fieldId];
+	/**
+	 * @return string the section ID, e.g. 'sharing'
+	 */
+	public function getSection(): string {
+		return 'fulltextsearch';
 	}
 
-	public function setValue(string $fieldId, mixed $value, IUser $user): void {
-		$this->assertKnownField($fieldId);
-
-		if (in_array($fieldId, self::BOOLEAN_FIELDS, true)) {
-			$value = $this->normalizeBoolean($value);
-		} else {
-			$value = $this->normalizeInteger($value);
-		}
-
-		$this->configService->setConfig([$fieldId => $value]);
-	}
-
-	private function assertKnownField(string $fieldId): void {
-		if (!in_array($fieldId, self::FIELDS, true)) {
-			throw new InvalidArgumentException('Unknown settings field: ' . $fieldId);
-		}
-	}
-
-	private function normalizeBoolean(mixed $value): bool {
-		if (is_bool($value)) {
-			return $value;
-		}
-
-		if (is_int($value)) {
-			return $value !== 0;
-		}
-
-		if (is_string($value)) {
-			return in_array(strtolower($value), ['1', 'yes', 'on', 'true'], true);
-		}
-
-		throw new InvalidArgumentException('Invalid boolean settings value');
-	}
-
-	private function normalizeInteger(mixed $value): int {
-		if (is_int($value)) {
-			return $value;
-		}
-
-		if (is_string($value) && preg_match('/^-?\d+$/', $value) === 1) {
-			return (int)$value;
-		}
-
-		throw new InvalidArgumentException('Invalid integer settings value');
+	/**
+	 * @return int whether the form should be rather on the top or bottom of
+	 *             the admin section. The forms are arranged in ascending order of the
+	 *             priority values. It is required to return a value between 0 and 100.
+	 *
+	 * keep the server setting at the top, right after "server settings"
+	 */
+	public function getPriority(): int {
+		return 51;
 	}
 }
