@@ -76,3 +76,8 @@ path = ["tests/stubs/icewind_streams_**"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "none"
 SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "css/*.css"
+SPDX-FileCopyrightText = "Nextcloud GmbH and Nextcloud contributors"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
