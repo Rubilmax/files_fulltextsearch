@@ -9,46 +9,37 @@ declare(strict_types=1);
 
 namespace OCA\Files_FullTextSearch\Command;
 
-use Exception;
-use OC\Core\Command\Base;
 use OCA\Files_FullTextSearch\Service\ConfigService;
-use Symfony\Component\Console\Input\InputArgument;
-use Symfony\Component\Console\Input\InputInterface;
-use Symfony\Component\Console\Output\OutputInterface;
+use OCP\Console\Attribute\Argument;
+use OCP\Console\Attribute\AsCommand;
+use OCP\Console\ExitCode;
+use OCP\Console\IOutput;
 
 /**
  * Class Configure
  *
  * @package OCA\Files_FullTextSearch\Command
  */
-class Configure extends Base {
+#[AsCommand(
+	name: 'files_fulltextsearch:configure',
+	description: 'Configure the installation',
+)]
+class Configure {
 	public function __construct(
 		private readonly ConfigService $configService,
 	) {
-		parent::__construct();
 	}
 
-	/**
-	 *
-	 */
-	protected function configure() {
-		parent::configure();
-		$this->setName('files_fulltextsearch:configure')
-			->addArgument('json', InputArgument::REQUIRED, 'set config')
-			->setDescription('Configure the installation');
-	}
-
-	/**
-	 *
-	 * @throws Exception
-	 */
-	protected function execute(InputInterface $input, OutputInterface $output): int {
-		$json = $input->getArgument('json');
-		if ($json !== false && $json !== '') {
-			$this->configService->setConfig(json_decode((string)$json, true) ?? []);
+	public function __invoke(
+		IOutput $output,
+		#[Argument(description: 'set config')]
+		string $json,
+	): ExitCode {
+		if ($json !== '') {
+			$this->configService->setConfig(json_decode($json, true) ?? []);
 		}
 
 		$output->writeln(json_encode($this->configService->getConfig(), JSON_PRETTY_PRINT));
-		return self::SUCCESS;
+		return ExitCode::Success;
 	}
 }
