@@ -31,7 +31,6 @@ use OCP\Files\IRootFolder;
 use OCP\Files\Node;
 use OCP\Files\NotFoundException;
 use OCP\Files\NotPermittedException;
-use OCP\Files\StorageNotAvailableException;
 use OCP\FullTextSearch\IFullTextSearchManager;
 use OCP\FullTextSearch\Model\IIndex;
 use OCP\FullTextSearch\Model\IIndexDocument;
@@ -128,16 +127,24 @@ class FilesService {
 		$level++;
 
 		$this->logger->debug('getChunksFromDirectory', ['userId' => $userId, 'level' => $level]);
-		$files = $node->getDirectoryListing();
-		if (empty($files)) {
-			$entries[] = $this->getPathFromRoot($node->getPath(), $userId, true);
+		try {
+			$files = $node->getDirectoryListing();
+			if (empty($files)) {
+				$entries[] = $this->getPathFromRoot($node->getPath(), $userId, true);
+			}
+		} catch (Throwable $e) {
+			$this->logger->warning('Unable to list directory for fulltextsearch chunks', ['userId' => $userId, 'exception' => $e]);
+			return [];
 		}
-
 		foreach ($files as $subNode) {
-			if ($subNode instanceof Folder && $level < $this->appConfig->getAppValueInt(ConfigLexicon::FILES_CHUNK_SIZE)) {
-				$entries = array_merge($entries, $this->getChunksFromDirectory($userId, $subNode, $level));
-			} else {
-				$entries[] = $this->getPathFromRoot($subNode->getPath(), $userId, true);
+			try {
+				if ($subNode instanceof Folder && $level < $this->appConfig->getAppValueInt(ConfigLexicon::FILES_CHUNK_SIZE)) {
+					$entries = array_merge($entries, $this->getChunksFromDirectory($userId, $subNode, $level));
+				} else {
+					$entries[] = $this->getPathFromRoot($subNode->getPath(), $userId, true);
+				}
+			} catch (Throwable $e) {
+				$this->logger->warning('Unable to generate fulltextsearch chunk', ['userId' => $userId, 'exception' => $e]);
 			}
 		}
 
@@ -165,8 +172,13 @@ class FilesService {
 		$this->initFileSystems($userId);
 		$this->sumDocuments = 0;
 
-		$files = $this->rootFolder->getUserFolder($userId)
-			->get($chunk);
+		try {
+			$files = $this->rootFolder->getUserFolder($userId)
+				->get($chunk);
+		} catch (Throwable $e) {
+			$this->logger->warning('Unable to retrieve fulltextsearch chunk', ['userId' => $userId, 'chunk' => $chunk, 'exception' => $e]);
+			return [];
+		}
 
 		$result = [];
 		if ($files instanceof Folder) {
@@ -180,6 +192,8 @@ class FilesService {
 				$result[] = $this->generateFilesDocumentFromFile($userId, $files);
 			} catch (FileIsNotIndexableException) {
 				/** we do nothin' */
+			} catch (Throwable $e) {
+				$this->logger->warning('Unable to generate fulltextsearch document', ['userId' => $userId, 'chunk' => $chunk, 'exception' => $e]);
 			}
 		}
 
@@ -197,34 +211,40 @@ class FilesService {
 		$documents = [];
 
 		$this->updateRunnerAction('generateIndexFiles', true);
+		try {
+			$path = $node->getPath();
+			if ($node->nodeExists('.noindex')) {
+				return $documents;
+			}
+
+			if (($this->appConfig->getAppValueInt(ConfigLexicon::FILES_EXTERNAL) === 2)
+				&& ($node->getMountPoint()->getMountType() === 'external')) {
+				return $documents;
+			}
+
+			$files = $node->getDirectoryListing();
+		} catch (Throwable $e) {
+			$this->logger->warning('Unable to list directory for fulltextsearch indexing', ['userId' => $userId, 'exception' => $e]);
+			return $documents;
+		}
+
 		$this->updateRunnerInfo(
 			[
-				'info' => $node->getPath(),
+				'info' => $path,
 				'title' => '',
 				'content' => '',
 				'documentTotal' => $this->sumDocuments
 			]
 		);
 
-		try {
-			if ($node->nodeExists('.noindex')) {
-				return $documents;
-			}
-		} catch (StorageNotAvailableException) {
-			return $documents;
-		}
-
-		if (($this->appConfig->getAppValueInt(ConfigLexicon::FILES_EXTERNAL) === 2)
-			&& ($node->getMountPoint()->getMountType() === 'external')) {
-			return $documents;
-		}
-
-		$files = $node->getDirectoryListing();
 		foreach ($files as $subNode) {
 			try {
 				$documents[] = $this->generateFilesDocumentFromFile($userId, $subNode);
 				$this->sumDocuments++;
 			} catch (FileIsNotIndexableException) {
+				continue;
+			} catch (Throwable $e) {
+				$this->logger->warning('Unable to generate fulltextsearch document', ['userId' => $userId, 'directory' => $path, 'exception' => $e]);
 				continue;
 			}
 
@@ -260,7 +280,9 @@ class FilesService {
 				$parent = $parent->getParent();
 				$documents[] = $this->generateFilesDocumentFromFile($userId, $parent);
 			}
-		} catch (Exception) {
+		} catch (FileIsNotIndexableException|NotFoundException) {
+		} catch (Throwable $e) {
+			$this->logger->warning('Unable to generate fulltextsearch parent document', ['userId' => $userId, 'exception' => $e]);
 		}
 
 		return $documents;
@@ -294,14 +316,10 @@ class FilesService {
 		$document = new FilesDocument(FilesProvider::FILES_PROVIDER_ID, (string)$file->getId());
 		$document->setAccess(new DocumentAccess($ownerId));
 
-		try {
-			$document->setType($file->getType())
-				->setOwnerId($ownerId)
-				->setPath($this->getPathFromViewerId($file->getId(), $viewerId))
-				->setViewerId($viewerId);
-		} catch (Throwable) {
-			throw new FileIsNotIndexableException();
-		}
+		$document->setType($file->getType())
+			->setOwnerId($ownerId)
+			->setPath($this->getPathFromViewerId($file->getId(), $viewerId))
+			->setViewerId($viewerId);
 
 		$document->setMimetype($file->getMimetype());
 
@@ -317,7 +335,7 @@ class FilesService {
 		}
 
 		$document->setModifiedTime($file->getMTime());
-		$stat = $file->stat();
+		$stat = $file->stat() ?: [];
 
 		$document->setMore(
 			[
@@ -415,7 +433,7 @@ class FilesService {
 	public function generateDocument(FilesDocument $document): void {
 		try {
 			$this->updateFilesDocument($document);
-		} catch (Exception $e) {
+		} catch (Throwable $e) {
 			// TODO - update $document with a error status instead of just ignore !
 			$document->getIndex()
 				->setStatus(IIndex::INDEX_IGNORE);
@@ -435,9 +453,12 @@ class FilesService {
 
 			if (($this->appConfig->getAppValueInt(ConfigLexicon::FILES_EXTERNAL) === 2)
 				&& ($file->getMountPoint()->getMountType() === 'external')) {
-				throw new Exception();
+				throw new FileIsNotIndexableException();
 			}
-		} catch (Exception) {
+
+			$this->isNodeIndexable($file);
+			$document = $this->generateFilesDocumentFromFile($index->getOwnerId(), $file);
+		} catch (FilesNotFoundException|NotFoundException|EmptyUserException|NoUserException|FileIsNotIndexableException) {
 			$index->setStatus(IIndex::INDEX_REMOVE);
 			$document = new FilesDocument($index->getProviderId(), $index->getDocumentId());
 			$document->setIndex($index);
@@ -446,9 +467,6 @@ class FilesService {
 			return $document;
 		}
 
-		$this->isNodeIndexable($file);
-
-		$document = $this->generateFilesDocumentFromFile($index->getOwnerId(), $file);
 		$document->setIndex($index);
 
 		$this->updateFilesDocumentFromFile($document, $file);

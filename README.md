@@ -17,3 +17,11 @@ It allows you to index the content of your users' files.
 
 [Can be found on the Wiki](https://github.com/nextcloud/files_fulltextsearch/wiki)
 
+### Development tests
+
+Install development dependencies with `composer install`. Set
+`NEXTCLOUD_SERVER_ROOT` to a Nextcloud 35 server checkout, then run
+`composer test` and `composer phpstan -- --memory-limit=1G`.
+
+For deployment, install with `composer install --no-dev`. Development-only
+`nextcloud/ocp` classes must not override the running server's public APIs.

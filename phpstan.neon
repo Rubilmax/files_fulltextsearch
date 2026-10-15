@@ -17,7 +17,7 @@ parameters:
 	#- tests/bootstrap.php
 	scanDirectories:
 		- vendor-bin/phpstan/vendor/nextcloud/ocp
-		#- vendor-bin/phpunit/vendor/phpunit/phpunit
+		- vendor-bin/phpunit/vendor/phpunit/phpunit
 	scanFiles:
 		- tests/stubs/oc_fulltextsearch_fulltextsearchmanager.stub
 		- tests/stubs/oc_fulltextsearch_mode_documentaccess.stub

@@ -32,6 +32,7 @@
     "cs:fix": "php-cs-fixer fix",
     "cs:check": "php-cs-fixer fix --dry-run --diff",
     "lint": "find . -name \\*.php -not -path './vendor/*' -not -path './vendor-bin/*' -not -path './build/*' -not -path './node_modules/*' -print0 | xargs -0 -n1 php -l",
+    "test": "phpunit --configuration tests/phpunit.xml",
 	"rector": "rector && composer cs:fix",
     "phpstan": "phpstan analyse -c phpstan.neon"
   },

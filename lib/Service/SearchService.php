@@ -21,6 +21,7 @@ use OCP\FullTextSearch\Model\ISearchResult;
 use OCP\IConfig;
 use OCP\IURLGenerator;
 use Psr\Log\LoggerInterface;
+use Throwable;
 
 class SearchService {
 	public function __construct(
@@ -50,7 +51,6 @@ class SearchService {
 			return;
 		}
 
-		$this->filesService->secureUsername($request->getAuthor());
 		$request->addRegexFilters(
 			[
 				['title' => '.*\.' . $extension]
@@ -92,7 +92,7 @@ class SearchService {
 	}
 
 	public function improveSearchResult(ISearchResult $searchResult): void {
-		$userId = $this->filesService->secureUsername($searchResult->getRequest()->getAuthor());
+		$userId = $searchResult->getRequest()->getAuthor();
 
 		$indexDocuments = $searchResult->getDocuments();
 		$filesDocuments = [];
@@ -118,7 +118,7 @@ class SearchService {
 				);
 
 				$filesDocuments[] = $filesDocument;
-			} catch (Exception $e) {
+			} catch (Throwable $e) {
 				$this->logger->warning('Exception while improving searchresult', ['exception' => $e]);
 			}
 		}
