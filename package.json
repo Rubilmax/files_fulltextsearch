@@ -1,6 +1,6 @@
 {
   "name": "files_fulltextsearch",
-  "version": "35.0.0",
+  "version": "35.0.1",
   "private": true,
   "description": "Full text search framework for Nextcloud - Files",
   "homepage": "https://github.com/nextcloud/files_fulltextsearch#readme",
@@ -23,14 +23,19 @@
     "stylelint:fix": "stylelint src/**/*.scss src/**/*.vue --fix",
     "watch": "vite --mode development build --watch"
   },
+  "overrides": {
+    "webdav": {
+      "minimatch": "11.0.1"
+    }
+  },
   "dependencies": {
     "@nextcloud/axios": "^2.5.1",
     "@nextcloud/initial-state": "^3.0.0",
     "@nextcloud/l10n": "^3.4.1",
     "@nextcloud/logger": "^3.0.3",
-    "@nextcloud/router": "^3.1.0",
-    "@nextcloud/vue": "^9.8.2",
-    "vue": "^3.5.39"
+    "@nextcloud/router": "^3.2.0",
+    "@nextcloud/vue": "^9.14.0",
+    "vue": "^3.5.44"
   },
   "devDependencies": {
     "@nextcloud/browserslist-config": "^3.1.2",
@@ -39,10 +44,10 @@
     "@nextcloud/typings": "^1.9.1",
     "@nextcloud/vite-config": "^2.5.4",
     "@vue/tsconfig": "^0.9.1",
-    "eslint": "^10.6.0",
-    "sass": "^1.99.0",
+    "eslint": "^10.13.0",
+    "sass": "^1.106.1",
     "typescript": "^5.9.3",
-    "vite": "^7.3.6"
+    "vite": "^7.3.7"
   },
   "engines": {
     "node": "^24.0.0",

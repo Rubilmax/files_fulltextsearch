@@ -11,7 +11,6 @@ namespace OCA\Files_FullTextSearch\Service;
 
 use Exception;
 use OC\FullTextSearch\Model\DocumentAccess;
-use OC\User\NoUserException;
 use OCA\Files_FullTextSearch\ConfigLexicon;
 use OCA\Files_FullTextSearch\Exceptions\EmptyUserException;
 use OCA\Files_FullTextSearch\Exceptions\FileIsNotIndexableException;
@@ -43,6 +42,7 @@ use OCP\Lock\LockedException;
 use OCP\SystemTag\ISystemTag;
 use OCP\SystemTag\ISystemTagManager;
 use OCP\SystemTag\ISystemTagObjectMapper;
+use OCP\User\Exceptions\UserNotFoundException;
 use Psr\Log\LoggerInterface;
 use Throwable;
 
@@ -134,6 +134,10 @@ class FilesService {
 		}
 
 		foreach ($files as $subNode) {
+			if ($subNode instanceof Folder && $this->groupFoldersService->isCrawledForOtherUser($subNode, $userId)) {
+				continue;
+			}
+
 			if ($subNode instanceof Folder && $level < $this->appConfig->getAppValueInt(ConfigLexicon::FILES_CHUNK_SIZE)) {
 				$entries = array_merge($entries, $this->getChunksFromDirectory($userId, $subNode, $level));
 			} else {
@@ -159,7 +163,7 @@ class FilesService {
 	 * @throws InvalidPathException
 	 * @throws NotFoundException
 	 * @throws NotPermittedException
-	 * @throws NoUserException
+	 * @throws UserNotFoundException
 	 */
 	public function getFilesFromUser(string $userId, string $chunk): array {
 		$this->initFileSystems($userId);
@@ -221,6 +225,10 @@ class FilesService {
 
 		$files = $node->getDirectoryListing();
 		foreach ($files as $subNode) {
+			if ($subNode instanceof Folder && $this->groupFoldersService->isCrawledForOtherUser($subNode, $userId)) {
+				continue;
+			}
+
 			try {
 				$documents[] = $this->generateFilesDocumentFromFile($userId, $subNode);
 				$this->sumDocuments++;
@@ -234,6 +242,40 @@ class FilesService {
 		}
 
 		return $documents;
+	}
+
+	public function releaseCrawledGroupFolders(string $userId): void {
+		$this->groupFoldersService->releaseCrawledFolders($userId);
+	}
+
+	/**
+	 * Resolving a node from its id in the home of a user is expensive. Most of the time the
+	 * node is already known from the view of a user, and its location is the same in the view
+	 * of the viewer: guess the path and check it points to the same file.
+	 *
+	 * @return string|null null if the path cannot be guessed
+	 */
+	private function guessPathFromViewerId(int $fileId, string $viewerId, Node $known): ?string {
+		$prefix = '/' . $viewerId . '/files/';
+		$knownPath = $known->getPath();
+		if (str_starts_with($knownPath . '/', $prefix)) {
+			// the node comes from the home of the viewer
+			$node = $known;
+		} elseif (preg_match('#^/[^/]+/files/(.+)$#', $knownPath, $matches) === 1) {
+			try {
+				$node = $this->rootFolder->getUserFolder($viewerId)->get($matches[1]);
+			} catch (Throwable) {
+				return null;
+			}
+		} else {
+			return null;
+		}
+
+		if ($node->getId() !== $fileId) {
+			return null;
+		}
+
+		return rtrim(str_replace('//', '/', $this->getPathFromRoot($node->getPath(), $viewerId)), '/');
 	}
 
 	private function initFileSystems(string $userId): void {
@@ -297,7 +339,7 @@ class FilesService {
 		try {
 			$document->setType($file->getType())
 				->setOwnerId($ownerId)
-				->setPath($this->getPathFromViewerId($file->getId(), $viewerId))
+				->setPath($this->getPathFromViewerId($file->getId(), $viewerId, $file))
 				->setViewerId($viewerId);
 		} catch (Throwable) {
 			throw new FileIsNotIndexableException();
@@ -359,7 +401,7 @@ class FilesService {
 	 *
 	 * @throws FilesNotFoundException
 	 * @throws EmptyUserException
-	 * @throws NoUserException
+	 * @throws UserNotFoundException
 	 */
 	public function getFileFromId(string $userId, int $fileId): Node {
 		if ($userId === '') {
@@ -367,7 +409,7 @@ class FilesService {
 		}
 
 		if ($this->userManager->get($userId) === null) {
-			throw new NoUserException('User does not exist: ' . $userId);
+			throw new UserNotFoundException('User does not exist: ' . $userId);
 		}
 
 		$files = $this->rootFolder->getUserFolder($userId)
@@ -393,7 +435,14 @@ class FilesService {
 	 *
 	 * @throws Exception
 	 */
-	private function getPathFromViewerId(int $fileId, string $viewerId): string {
+	private function getPathFromViewerId(int $fileId, string $viewerId, ?Node $known = null): string {
+		if ($known !== null) {
+			$path = $this->guessPathFromViewerId($fileId, $viewerId, $known);
+			if ($path !== null) {
+				return $path;
+			}
+		}
+
 		$viewerFiles = $this->rootFolder->getUserFolder($viewerId)
 			->getById($fileId);
 
@@ -1017,9 +1066,5 @@ class FilesService {
 		);
 
 		return $result;
-	}
-
-	public function secureUsername(string $username): string {
-		return str_replace('.', '\.', $username);
 	}
 }
